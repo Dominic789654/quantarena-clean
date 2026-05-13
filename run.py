@@ -1,0 +1,1218 @@
+#!/usr/bin/env python3
+"""
+Unified Agent Trading - Main Entry Point
+==========================================
+Combines DeepEar (intelligence gathering) and DeepFund (trading analysis)
+"""
+
+import argparse
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Dict, Any, List
+
+import yaml
+
+# Fix Tushare's tk.csv issue BEFORE any other imports!
+def _fix_tushare_token_file() -> None:
+    """
+    Fix the tushare token file issue before importing anything else.
+    
+    Checks file permissions before attempting to remove corrupted token file.
+    Silently continues if file cannot be removed (non-critical error).
+    """
+    import warnings
+    
+    tk_csv_path = os.path.expanduser("~/tk.csv")
+    
+    # Check if file exists
+    if not os.path.exists(tk_csv_path):
+        return
+    
+    # Check if we have write permission before attempting removal
+    if not os.access(tk_csv_path, os.W_OK):
+        warnings.warn(
+            f"Cannot fix Tushare token file (permission denied): {tk_csv_path}. "
+            f"You may need to remove it manually if it's corrupted.",
+            RuntimeWarning,
+            stacklevel=2
+        )
+        return
+    
+    try:
+        # Try to validate file content
+        try:
+            import pandas as pd
+            df = pd.read_csv(tk_csv_path)
+            if df.empty or 'token' not in df.columns:
+                # File is corrupted, remove it
+                os.remove(tk_csv_path)
+        except Exception:
+            # Cannot read file (corrupted or locked), try to remove anyway
+            os.remove(tk_csv_path)
+            
+    except PermissionError:
+        # Permission denied during removal (race condition or changed permissions)
+        warnings.warn(
+            f"Permission denied when removing Tushare token file: {tk_csv_path}",
+            RuntimeWarning,
+            stacklevel=2
+        )
+    except OSError as e:
+        # Other OS-level errors (file locked, etc.)
+        warnings.warn(
+            f"Could not remove Tushare token file {tk_csv_path}: {e}",
+            RuntimeWarning,
+            stacklevel=2
+        )
+
+# Apply the fix FIRST, before any other imports
+_fix_tushare_token_file()
+
+# Setup project paths using unified path manager
+from shared.utils.path_manager import (
+    get_deepfund_src,
+    get_project_root,
+    setup_paths,
+)
+from shared.config.profile_registry import VALID_PROFILE_NAMES
+from shared.config.provider_routing import preferred_us_data_provider
+from shared.utils.time_utils import now_utc
+setup_paths()
+
+# Shared path handles used across run modes
+PROJECT_ROOT = get_project_root()
+DEEPFUND_SRC = get_deepfund_src()
+DEFAULT_BACKTEST_ANALYSTS_ARG = "fundamental,technical,company_news"
+DEFAULT_MULTI_PERSONALITIES_ARG = "conservative,balanced,aggressive,passive"
+
+# Import stats for usage tracking
+from deepear.src.utils.stats import get_stats
+
+
+def _validate_environment(mode: str = None, verbose: bool = True) -> bool:
+    """
+    Validate environment variables before running.
+    
+    Args:
+        mode: Operating mode ('deepear', 'deepfund', 'backtest', or None)
+        verbose: Whether to print validation results
+        
+    Returns:
+        True if validation passes, False otherwise
+    """
+    try:
+        from shared.config.validator import validate_env
+        return validate_env(mode=mode, raise_on_error=True, verbose=verbose)
+    except ImportError:
+        # Validator module not available, skip validation
+        return True
+    except ValueError as e:
+        if verbose:
+            print(f"\n{'='*60}", file=sys.stderr)
+            print("Environment Configuration Error", file=sys.stderr)
+            print('='*60, file=sys.stderr)
+            print(f"\n{e}", file=sys.stderr)
+            print(f"\n{'='*60}", file=sys.stderr)
+            print("Quick Fix:", file=sys.stderr)
+            print("  1. cp .env.example .env", file=sys.stderr)
+            print("  2. Edit .env and fill in your API keys", file=sys.stderr)
+            print("  3. Run again", file=sys.stderr)
+            print('='*60 + "\n", file=sys.stderr)
+        return False
+
+
+def _print_backtest_env_error(message: str, verbose: bool = True) -> None:
+    """Print a focused backtest environment validation error."""
+    if not verbose:
+        return
+    print(f"\n{'='*60}", file=sys.stderr)
+    print("Backtest Environment Configuration Error", file=sys.stderr)
+    print('='*60, file=sys.stderr)
+    print(f"\n{message}", file=sys.stderr)
+    print(f"\n{'='*60}\n", file=sys.stderr)
+
+
+def _configured_us_data_provider(config: Dict[str, Any]) -> Optional[str]:
+    """Return the US data provider configured in the resolved runtime config."""
+    api_source = config.get("api_source") or {}
+    if not isinstance(api_source, dict):
+        return None
+    return str(api_source.get("us_source") or api_source.get("default") or "").strip() or None
+
+
+def _validate_non_llm_backtest_environment(runtime: Dict[str, Any], verbose: bool = True) -> bool:
+    """Validate only the data dependency needed by non-LLM backtests."""
+    market = str(runtime.get("market") or "").strip().lower()
+    config = runtime.get("config") or {}
+
+    if market == "cn":
+        explicit_cn_source = os.getenv("DEEPFUND_CN_API_SOURCE", "").strip().lower()
+        if explicit_cn_source and explicit_cn_source != "tushare":
+            _print_backtest_env_error(
+                "DEEPFUND_CN_API_SOURCE supports only 'tushare' for CN backtests.",
+                verbose=verbose,
+            )
+            return False
+        if not os.getenv("TUSHARE_API_KEY", "").strip():
+            _print_backtest_env_error(
+                "Set TUSHARE_API_KEY to run CN backtests that need market data.",
+                verbose=verbose,
+            )
+            return False
+        return True
+
+    if market == "us":
+        provider = preferred_us_data_provider(
+            configured=_configured_us_data_provider(config),
+            env_override=os.getenv("DEEPFUND_US_API_SOURCE", ""),
+        )
+        required_key_by_provider = {
+            "alpha_vantage": "ALPHA_VANTAGE_API_KEY",
+            "fmp": "FMP_API_KEY",
+        }
+        required_key = required_key_by_provider.get(provider)
+        if required_key is None:
+            _print_backtest_env_error(
+                f"US backtests currently support FMP or Alpha Vantage market data, got '{provider}'. "
+                "Set DEEPFUND_US_API_SOURCE=fmp or DEEPFUND_US_API_SOURCE=alpha_vantage.",
+                verbose=verbose,
+            )
+            return False
+        if required_key and not os.getenv(required_key, "").strip():
+            _print_backtest_env_error(
+                f"Set {required_key} to run US backtests with the '{provider}' data provider. "
+                "Set DEEPFUND_US_API_SOURCE=fmp or DEEPFUND_US_API_SOURCE=alpha_vantage to choose a provider.",
+                verbose=verbose,
+            )
+            return False
+        return True
+
+    _print_backtest_env_error(
+        f"Unsupported backtest market '{market}'. Expected 'cn' or 'us'.",
+        verbose=verbose,
+    )
+    return False
+
+
+def _validate_backtest_environment_for_runtime(runtime: Dict[str, Any], verbose: bool = True) -> bool:
+    """Validate backtest environment requirements after resolving runtime mode."""
+    if runtime.get("use_llm"):
+        return _validate_environment(mode="backtest", verbose=verbose)
+    return _validate_non_llm_backtest_environment(runtime, verbose=verbose)
+
+
+def _get_deepfund_config_candidates(market: Optional[str]) -> List[Path]:
+    """Build ordered config candidates for DeepFund auto config selection."""
+    config_dir = PROJECT_ROOT / "deepfund" / "src" / "config"
+    market_key = (market or "").lower()
+
+    if market_key in ["cn", "china", "cn_a", "ashare"]:
+        return [
+            config_dir / "exp_a_share.yaml",
+            config_dir / "ashare.yaml",
+        ]
+
+    if market_key in ["us", "usa", "us_stocks"]:
+        us_candidates = [
+            config_dir / "exp_us_stocks.yaml",
+            config_dir / "dev.yaml",
+            config_dir / "us.yaml",
+        ]
+
+        # Prefer `us.yaml` whenever FMP is available unless the user explicitly forces Alpha.
+        provider = preferred_us_data_provider(
+            env_override=os.getenv("DEEPFUND_US_API_SOURCE", ""),
+        )
+        if provider == "fmp":
+            return [us_candidates[0], us_candidates[2], us_candidates[1]]
+
+        return us_candidates
+
+    return [config_dir / "dev.yaml"]
+
+
+def _load_yaml_config_file(config_path: Optional[Path]) -> Dict[str, Any]:
+    """Load a YAML config file into a dict."""
+    if config_path is None:
+        return {}
+    try:
+        with config_path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        raise ValueError(f"Configuration file not found: {config_path}")
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Error parsing configuration file {config_path}: {exc}")
+    if not isinstance(data, dict):
+        raise ValueError(f"Configuration file must contain a YAML mapping: {config_path}")
+    return data
+
+
+def _select_backtest_config_file(args: argparse.Namespace) -> Optional[Path]:
+    """Select an optional backtest config file, preferring FOF template when relevant."""
+    if args.config:
+        return Path(args.config)
+
+    single_personality = str(getattr(args, "personality", "")).strip().lower()
+    multi_personalities_arg = str(getattr(args, "personalities", "")).strip()
+    multi_personalities = {
+        item.strip().lower()
+        for item in multi_personalities_arg.split(",")
+        if item.strip()
+    }
+    if single_personality == "fof" or "fof" in multi_personalities:
+        fof_config = PROJECT_ROOT / "deepfund" / "src" / "config" / "fof.yaml"
+        if fof_config.exists():
+            return fof_config
+    return None
+
+
+def _extract_market_from_config(config: Dict[str, Any]) -> Optional[str]:
+    """Extract market from flat or nested trading config."""
+    market = str(config.get("market", "")).strip()
+    if market:
+        return market.lower()
+
+    trading_cfg = config.get("trading") or {}
+    if isinstance(trading_cfg, dict):
+        nested_market = str(trading_cfg.get("market", "")).strip()
+        if nested_market:
+            return nested_market.lower()
+
+    return None
+
+
+def _extract_tickers_from_config(config: Dict[str, Any]) -> List[str]:
+    """Extract tickers from either a flat list or an experiment universe definition."""
+    raw_tickers = config.get("tickers") or []
+    tickers = [str(ticker).strip() for ticker in raw_tickers if str(ticker).strip()]
+    if tickers:
+        return tickers
+
+    experiment_universe = config.get("experiment_universe") or config.get("universe") or {}
+    sectors = experiment_universe.get("sectors") if isinstance(experiment_universe, dict) else []
+    collected: List[str] = []
+    seen = set()
+    for sector in sectors or []:
+        stocks = (sector or {}).get("stocks") or []
+        for stock in stocks:
+            if isinstance(stock, dict):
+                ticker = str(stock.get("ticker", "")).strip()
+            else:
+                ticker = str(stock).strip()
+            if ticker and ticker not in seen:
+                seen.add(ticker)
+                collected.append(ticker)
+    return collected
+
+
+def _resolve_backtest_runtime_options(args: argparse.Namespace) -> Dict[str, Any]:
+    """Resolve backtest runtime options from CLI args plus optional YAML config."""
+    config_path = _select_backtest_config_file(args)
+    config = _load_yaml_config_file(config_path)
+
+    tickers_arg = args.tickers
+    config_tickers = _extract_tickers_from_config(config)
+    if not tickers_arg and config_tickers:
+        tickers_arg = ",".join(config_tickers)
+    tickers = _parse_tickers_arg(tickers_arg, mode_name="backtest mode")
+    if tickers is None:
+        raise ValueError("tickers are required for backtest mode")
+
+    config_analysts = config.get("workflow_analysts") or config.get("analysts") or []
+    analysts_arg = args.analysts
+    analysts_explicit = bool(getattr(args, "_analysts_explicit", False))
+    if (not analysts_explicit) and (not analysts_arg or analysts_arg == DEFAULT_BACKTEST_ANALYSTS_ARG) and config_analysts:
+        analysts = [str(item).strip() for item in config_analysts if str(item).strip()]
+    else:
+        analysts = _parse_optional_csv(analysts_arg)
+
+    personality = args.personality
+    if personality == "balanced" and config.get("personality"):
+        personality = str(config.get("personality")).strip().lower()
+
+    market = args.market
+    config_market = _extract_market_from_config(config)
+    market_explicit = bool(getattr(args, "_market_explicit", False))
+    if not market_explicit and config_market:
+        market = config_market
+
+    cashflow = args.cashflow
+    if cashflow == 100000.0 and config.get("cashflow") is not None:
+        cashflow = float(config.get("cashflow"))
+
+    use_llm = bool(args.use_llm)
+    if not use_llm:
+        use_llm = bool(config.get("llm")) or bool(config_analysts) or personality == "fof"
+
+    resolved_config = dict(config)
+    resolved_config["tickers"] = list(tickers)
+    resolved_config["workflow_analysts"] = list(analysts or [])
+    resolved_config["personality"] = personality
+    resolved_config["market"] = market
+    resolved_config["cashflow"] = cashflow
+
+    trading_cfg = dict(resolved_config.get("trading", {}) or {})
+    trading_cfg["market"] = market.upper()
+    resolved_config["trading"] = trading_cfg
+
+    benchmark_cfg = dict(resolved_config.get("benchmark", {}) or {})
+    benchmark_mode_explicit = bool(getattr(args, "_benchmark_mode_explicit", False))
+    benchmark_index_explicit = bool(getattr(args, "_benchmark_index_explicit", False))
+    if benchmark_mode_explicit:
+        benchmark_cfg["mode"] = args.benchmark_mode
+    elif not benchmark_cfg.get("mode"):
+        benchmark_cfg["mode"] = args.benchmark_mode
+    if benchmark_index_explicit and args.benchmark_index:
+        benchmark_cfg["index_code"] = args.benchmark_index
+    resolved_config["benchmark"] = benchmark_cfg
+
+    return {
+        "tickers": tickers,
+        "analysts": analysts,
+        "personality": personality,
+        "market": market,
+        "cashflow": cashflow,
+        "use_llm": use_llm,
+        "config": resolved_config,
+        "config_path": str(config_path) if config_path else None,
+    }
+
+
+def _resolve_multi_personality_runtime_options(args: argparse.Namespace) -> Dict[str, Any]:
+    """Resolve multi-personality runtime options from CLI args plus optional YAML config."""
+    config_path = _select_backtest_config_file(args)
+    config = _load_yaml_config_file(config_path)
+
+    tickers_arg = args.tickers
+    config_tickers = _extract_tickers_from_config(config)
+    if not tickers_arg and config_tickers:
+        tickers_arg = ",".join(config_tickers)
+    tickers = _parse_tickers_arg(tickers_arg, mode_name="multi-personality mode")
+    if tickers is None:
+        raise ValueError("tickers are required for multi-personality mode")
+
+    config_analysts = config.get("workflow_analysts") or config.get("analysts") or []
+    analysts_arg = args.analysts
+    analysts_explicit = bool(getattr(args, "_analysts_explicit", False))
+    if (not analysts_explicit) and (not analysts_arg or analysts_arg == DEFAULT_BACKTEST_ANALYSTS_ARG) and config_analysts:
+        analysts = [str(item).strip() for item in config_analysts if str(item).strip()]
+    else:
+        analysts = _parse_optional_csv(analysts_arg)
+
+    personalities = _parse_personalities_arg(args.personalities)
+    if personalities is None:
+        raise ValueError("invalid personalities for multi-personality mode")
+
+    market = args.market
+    config_market = _extract_market_from_config(config)
+    market_explicit = bool(getattr(args, "_market_explicit", False))
+    if not market_explicit and config_market:
+        market = config_market
+
+    cashflow = args.cashflow
+    if cashflow == 100000.0 and config.get("cashflow") is not None:
+        cashflow = float(config.get("cashflow"))
+
+    use_llm = True
+
+    resolved_config = dict(config)
+    resolved_config["tickers"] = list(tickers)
+    resolved_config["workflow_analysts"] = list(analysts or [])
+    resolved_config["personalities"] = list(personalities)
+    resolved_config["market"] = market
+    resolved_config["cashflow"] = cashflow
+
+    trading_cfg = dict(resolved_config.get("trading", {}) or {})
+    trading_cfg["market"] = market.upper()
+    resolved_config["trading"] = trading_cfg
+
+    benchmark_cfg = dict(resolved_config.get("benchmark", {}) or {})
+    benchmark_mode_explicit = bool(getattr(args, "_benchmark_mode_explicit", False))
+    benchmark_index_explicit = bool(getattr(args, "_benchmark_index_explicit", False))
+    if benchmark_mode_explicit:
+        benchmark_cfg["mode"] = args.benchmark_mode
+    elif not benchmark_cfg.get("mode"):
+        benchmark_cfg["mode"] = args.benchmark_mode
+    if benchmark_index_explicit and args.benchmark_index:
+        benchmark_cfg["index_code"] = args.benchmark_index
+    resolved_config["benchmark"] = benchmark_cfg
+
+    return {
+        "tickers": tickers,
+        "analysts": analysts,
+        "personalities": personalities,
+        "market": market,
+        "cashflow": cashflow,
+        "use_llm": use_llm,
+        "config": resolved_config,
+        "config_path": str(config_path) if config_path else None,
+    }
+
+
+def print_banner() -> None:
+    """Print application banner."""
+    banner = """
+    ╔════════════════════════════════════════════════════════════╗
+    ║         Unified Agent Trading System                         ║
+    ║    DeepEar Intelligence + DeepFund Trading Analysis         ║
+    ╚══════════════════════════════════════════════════════════════╝
+    """
+    print(banner)
+
+
+def check_env_file() -> bool:
+    """Check if .env file exists, create from example if not."""
+    env_file: Path = PROJECT_ROOT / ".env"
+    env_example: Path = PROJECT_ROOT / ".env.example"
+
+    if env_file.exists():
+        return True
+
+    if env_example.exists():
+        print("WARNING: .env file not found. Creating from .env.example...")
+        import shutil
+        shutil.copy(env_example, env_file)
+        print(f"Created .env file at {env_file}")
+        print("Please edit .env file with your API keys before running again.")
+        return False
+    else:
+        print("ERROR: Neither .env nor .env.example found!")
+        return False
+
+
+def run_deepear(args: argparse.Namespace) -> int:
+    """Run DeepEar intelligence gathering."""
+    # Validate environment for deepear mode
+    if not _validate_environment(mode="deepear"):
+        return 1
+    
+    print("\n" + "=" * 60)
+    print("Mode: DeepEar Intelligence Gathering")
+    print("=" * 60 + "\n")
+
+    try:
+        # Import DeepEar modules
+        from main_flow import SignalFluxWorkflow
+        from utils.logging_setup import setup_file_logging, make_run_id
+
+        # Setup logging
+        run_id = args.run_id or make_run_id()
+        log_dir = args.log_dir or str(PROJECT_ROOT / "logs")
+        log_path = setup_file_logging(run_id=run_id, log_dir=log_dir, level=args.log_level)
+
+        print(f"Log file: {log_path}")
+        print(f"Run ID: {run_id}")
+
+        # Parse sources
+        if args.sources.lower() in ["all", "financial", "social", "tech"]:
+            sources = [args.sources]
+        else:
+            sources = [s.strip() for s in args.sources.split(",")]
+
+        # Parse depth
+        depth = args.depth
+        try:
+            depth = int(depth)
+        except ValueError:
+            pass  # Keep as 'auto' or original string
+
+        # Create workflow
+        workflow = SignalFluxWorkflow(isq_template_id=args.template or "default_isq_v1")
+
+        # Run workflow
+        result = workflow.run(
+            sources=sources,
+            wide=args.wide or 10,
+            depth=depth,
+            query=args.query or "扫描A股市场热点",
+            run_id=run_id,
+            checkpoint_dir=args.checkpoint_dir or str(PROJECT_ROOT / "reports" / "checkpoints"),
+            resume=args.resume,
+            resume_from=args.resume_from or "report",
+            concurrency=args.concurrency or 1,
+        )
+
+        print(f"\n{'=' * 60}")
+        print(f"DeepEar completed successfully!")
+        print(f"Output: {result}")
+        return 0
+
+    except ImportError as e:
+        print(f"ERROR: Failed to import DeepEar modules: {e}")
+        print("Make sure DeepEar is properly installed.")
+        return 1
+    except Exception as e:
+        print(f"ERROR: DeepEar execution failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+def run_deepfund(args: argparse.Namespace) -> int:
+    """Run DeepFund trading analysis."""
+    # Validate environment for deepfund mode
+    if not _validate_environment(mode="deepfund"):
+        return 1
+    
+    print("\n" + "=" * 60)
+    print("Mode: DeepFund Trading Analysis")
+    print("=" * 60 + "\n")
+
+    try:
+        # Import DeepFund modules
+        # main.py is directly in deepfund/src/
+        import importlib.util
+        main_path = DEEPFUND_SRC / "main.py"
+        spec = importlib.util.spec_from_file_location("deepfund_main", main_path)
+        deepfund_main_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(deepfund_main_module)
+        deepfund_main = deepfund_main_module.main
+
+        from dotenv import load_dotenv
+
+        # Load environment
+        load_dotenv(PROJECT_ROOT / ".env")
+
+        # Determine config file
+        config_file = args.config
+        if not config_file:
+            config_candidates = _get_deepfund_config_candidates(args.market)
+
+            # Find first existing config
+            for cfg in config_candidates:
+                if cfg.exists():
+                    config_file = str(cfg)
+                    break
+            else:
+                config_file = str(config_candidates[0])
+
+        print(f"Using config: {config_file}")
+
+        # Parse trading date
+        trading_date = args.date
+        if not trading_date:
+            # Default to today or last trading day
+            trading_date = now_utc().strftime("%Y-%m-%d")
+
+        try:
+            datetime.strptime(trading_date, "%Y-%m-%d")
+        except ValueError:
+            print(f"ERROR: Invalid date format: {trading_date}. Use YYYY-MM-DD.")
+            return 1
+
+        # Build sys.argv for deepfund_main
+        sys.argv = [
+            "deepfund",
+            "--config", config_file,
+            "--trading-date", trading_date,
+        ]
+        if args.local_db:
+            sys.argv.append("--local-db")
+
+        # Run DeepFund
+        deepfund_main()
+
+        print(f"\n{'=' * 60}")
+        print(f"DeepFund completed successfully!")
+        return 0
+
+    except ImportError as e:
+        print(f"ERROR: Failed to import DeepFund modules: {e}")
+        print("Make sure DeepFund is properly installed.")
+        return 1
+    except Exception as e:
+        print(f"ERROR: DeepFund execution failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+def run_full_pipeline(args: argparse.Namespace) -> int:
+    """Run complete pipeline: DeepEar + DeepFund."""
+    print("\n" + "=" * 60)
+    print("Mode: Full Pipeline (DeepEar + DeepFund)")
+    print("=" * 60 + "\n")
+
+    exit_code = 0
+
+    # Phase 1: DeepEar Intelligence
+    if not args.skip_deepear:
+        deepear_exit = run_deepear(args)
+        if deepear_exit != 0 and not args.continue_on_error:
+            return deepear_exit
+        exit_code = max(exit_code, deepear_exit)
+    else:
+        print("Skipping DeepEar phase...")
+
+    # Phase 2: DeepFund Trading
+    if not args.skip_deepfund:
+        deepfund_exit = run_deepfund(args)
+        if deepfund_exit != 0 and not args.continue_on_error:
+            return deepfund_exit
+        exit_code = max(exit_code, deepfund_exit)
+    else:
+        print("Skipping DeepFund phase...")
+
+    print("\n" + "=" * 60)
+    print("Full Pipeline completed!")
+    print(f"{'=' * 60}")
+
+    # 打印使用统计报告
+    get_stats().print_report()
+
+    return exit_code
+
+
+VALID_PERSONALITIES = list(VALID_PROFILE_NAMES)
+
+
+def _parse_tickers_arg(tickers_arg: Optional[str], mode_name: str) -> Optional[List[str]]:
+    """Parse comma-separated tickers from CLI args."""
+    if not tickers_arg:
+        print(f"ERROR: --tickers is required for {mode_name}")
+        print("Example: --tickers '600519,000858,300750'")
+        return None
+    tickers = [t.strip() for t in tickers_arg.split(",") if t.strip()]
+    if not tickers:
+        print("ERROR: No valid tickers provided")
+        return None
+    print(f"Tickers: {tickers}")
+    return tickers
+
+
+def _validate_backtest_date_range(start_date: Optional[str], end_date: Optional[str], mode_name: str) -> bool:
+    """Validate CLI date args for backtesting modes."""
+    if not start_date or not end_date:
+        print(f"ERROR: --start-date and --end-date are required for {mode_name}")
+        print("Example: --start-date 2024-01-01 --end-date 2024-01-31")
+        return False
+    try:
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+        end = datetime.strptime(end_date, "%Y-%m-%d")
+        if start > end:
+            print("ERROR: start-date must be before end-date")
+            return False
+    except ValueError as e:
+        print(f"ERROR: Invalid date format: {e}. Use YYYY-MM-DD.")
+        return False
+    return True
+
+
+def _parse_optional_csv(arg_value: Optional[str]) -> Optional[List[str]]:
+    """Parse optional comma-separated list."""
+    if not arg_value:
+        return None
+    items = [item.strip() for item in arg_value.split(",") if item.strip()]
+    return items or None
+
+
+def _print_backtest_mode_config(
+    args: argparse.Namespace,
+    analysts: Optional[List[str]],
+    *,
+    market: Optional[str] = None,
+    cashflow: Optional[float] = None,
+    personality: Optional[str] = None,
+    use_llm: Optional[bool] = None,
+    benchmark: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Print backtest mode configuration summary."""
+    effective_market = market or args.market
+    effective_cashflow = args.cashflow if cashflow is None else cashflow
+    effective_personality = personality or args.personality
+    effective_use_llm = args.use_llm if use_llm is None else use_llm
+
+    effective_benchmark = dict(benchmark or {})
+    benchmark_mode = effective_benchmark.get("mode", args.benchmark_mode)
+    benchmark_index = effective_benchmark.get("index_code", args.benchmark_index)
+
+    print(f"Period: {args.start_date} to {args.end_date}")
+    print(f"Market: {effective_market}")
+    print(f"Initial Capital: ${effective_cashflow:,.2f}")
+    print(f"Benchmark Mode: {benchmark_mode}")
+    if benchmark_index:
+        print(f"Benchmark Index: {benchmark_index}")
+    if effective_use_llm:
+        print("\n[LLM Mode Enabled]")
+        print(f"  Analysts: {analysts}")
+        print(f"  Personality: {effective_personality}")
+        print("  Note: Each day will call LLM APIs, incurring costs.")
+    else:
+        print("\n[Simple Mode: Buy-and-hold strategy]")
+    if args.prefetch_only:
+        print("\n[Prefetch-only mode: downloading data without running backtest]")
+    print("\n" + "-" * 60)
+
+
+def _print_backtest_result(result: Any) -> int:
+    """Print standard backtest result summary and return exit code."""
+    print("\n" + "=" * 60)
+    print("Backtest Results Summary")
+    print("=" * 60)
+    print(f"Run ID: {result.run_id}")
+    print(f"Total Return: {result.metrics.get('total_return', 0):+.2f}%")
+    print(f"Annualized Return: {result.metrics.get('annualized_return', 0):+.2f}%")
+    print(f"Max Drawdown: {result.metrics.get('max_drawdown', 0):.2f}%")
+    print(f"Sharpe Ratio: {result.metrics.get('sharpe_ratio', 0):.2f}")
+    print(f"Total Trades: {result.metrics.get('total_trades', 0)}")
+    print(f"Win Rate: {result.metrics.get('win_rate', 0):.1f}%")
+    print(f"\nFinal Value: ${result.metrics.get('final_value', 0):,.2f}")
+    print("\n" + "-" * 60)
+    print(f"Reports saved to: reports/backtest/{result.run_id}/")
+    print("  - backtest_report.md")
+    print("  - equity_curve.png")
+    print("  - trades.csv")
+    print("  - metrics.json")
+    print("=" * 60)
+    if result.errors:
+        print(f"\nWarnings/Errors ({len(result.errors)}):")
+        for err in result.errors[:5]:
+            print(f"  - {err}")
+        if len(result.errors) > 5:
+            print(f"  ... and {len(result.errors) - 5} more")
+    return 0 if not result.errors else 1
+
+
+def _execute_backtest_mode(args: argparse.Namespace, run_backtest: Any) -> int:
+    """Execute backtest mode after imports are ready."""
+    if not _validate_backtest_date_range(args.start_date, args.end_date, mode_name="backtest mode"):
+        return 1
+    try:
+        runtime = _resolve_backtest_runtime_options(args)
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        return 1
+    if not _validate_backtest_environment_for_runtime(runtime):
+        return 1
+    _print_backtest_mode_config(
+        args,
+        runtime["analysts"],
+        market=runtime["market"],
+        cashflow=runtime["cashflow"],
+        personality=runtime["personality"],
+        use_llm=runtime["use_llm"],
+        benchmark=runtime["config"].get("benchmark"),
+    )
+    if runtime["config_path"]:
+        print(f"Using config: {runtime['config_path']}")
+    result = run_backtest(
+        tickers=runtime["tickers"],
+        start_date=args.start_date,
+        end_date=args.end_date,
+        initial_cash=runtime["cashflow"],
+        market=runtime["market"],
+        prefetch_only=args.prefetch_only,
+        config=runtime["config"],
+        use_llm=runtime["use_llm"],
+        analysts=runtime["analysts"],
+        personality=runtime["personality"],
+    )
+    if args.prefetch_only:
+        print("\n" + "=" * 60)
+        print("Data prefetch completed!")
+        print("=" * 60)
+        return 0
+    return _print_backtest_result(result) if result else 1
+
+
+def _parse_personalities_arg(personalities_arg: str) -> Optional[List[str]]:
+    """Parse and validate personalities."""
+    personalities = [p.strip() for p in personalities_arg.split(",") if p.strip()]
+    for personality in personalities:
+        if personality not in VALID_PERSONALITIES:
+            print(f"ERROR: Invalid personality '{personality}'. Valid options: {VALID_PERSONALITIES}")
+            return None
+    return personalities
+
+
+def _print_multi_personality_config(
+    args: argparse.Namespace,
+    personalities: List[str],
+    analysts: Optional[List[str]],
+    *,
+    market: str,
+    cashflow: float,
+) -> None:
+    """Print multi-personality mode configuration summary."""
+    print(f"Period: {args.start_date} to {args.end_date}")
+    print(f"Market: {market}")
+    print(f"Initial Capital: ¥{cashflow:,.2f}")
+    print("\n[Multi-Personality Mode Enabled]")
+    print(f"  Personalities: {personalities}")
+    print(f"  Analysts: {analysts}")
+    print(f"  Max workers: {args.max_workers or 'auto'}")
+    print("  Note: Data will be prefetched once and shared across all personalities.")
+    print("\n" + "-" * 60)
+
+
+def _print_multi_personality_results(comparison: Any, cashflow: float) -> None:
+    """Print standard multi-personality comparison summary."""
+    print("\n" + "=" * 60)
+    print("Multi-Personality Backtest Results Summary")
+    print("=" * 60)
+    print(f"Run ID: {comparison.run_id}")
+    print(f"Total Duration: {comparison.total_duration:.2f} seconds")
+    print(f"Trading Days: {comparison.trading_days}")
+    print("\n--- Performance Comparison ---")
+    sorted_results = sorted(
+        comparison.personality_results.values(),
+        key=lambda x: x.total_return,
+        reverse=True,
+    )
+    for i, result in enumerate(sorted_results, 1):
+        final_value = cashflow * (1 + result.total_return / 100)
+        print(f"\n{i}. {result.personality.upper()}:")
+        print(f"   Return: {result.total_return:+.2f}%")
+        print(f"   Max Drawdown: {result.max_drawdown:.2f}%")
+        print(f"   Sharpe Ratio: {result.sharpe_ratio:.2f}")
+        print(f"   Final Value: ¥{final_value:,.0f}")
+        print(f"   Trades: {result.trade_count}")
+        print(f"   Duration: {result.duration_seconds:.2f}s")
+    print("\n" + "-" * 60)
+    print(f"Detailed reports saved to: reports/multi_personality/{comparison.run_id}/")
+    print("  - comparison_report.md (full analysis)")
+    print("  - comparison_data.json (raw data)")
+    print("  - personality_summary.csv (CSV summary)")
+    print("=" * 60)
+
+
+def run_backtest_mode(args: argparse.Namespace) -> int:
+    """Run backtesting simulation."""
+    print("\n" + "=" * 60)
+    print("Mode: Backtesting")
+    print("=" * 60 + "\n")
+
+    try:
+        from backtest.engine import run_backtest
+        return _execute_backtest_mode(args, run_backtest)
+
+    except ImportError as e:
+        print(f"ERROR: Failed to import backtest modules: {e}")
+        print("Make sure the backtest module is properly installed.")
+        import traceback
+        traceback.print_exc()
+        return 1
+    except Exception as e:
+        print(f"ERROR: Backtest execution failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+def run_multi_personality_mode(args: argparse.Namespace) -> int:
+    """Run multi-personality parallel backtesting."""
+    print("\n" + "=" * 60)
+    print("Mode: Multi-Personality Parallel Backtesting")
+    print("=" * 60 + "\n")
+
+    try:
+        from backtest.multi_personality_engine import run_multi_personality_backtest
+
+        if not _validate_backtest_date_range(args.start_date, args.end_date, mode_name="multi-personality mode"):
+            return 1
+        try:
+            runtime = _resolve_multi_personality_runtime_options(args)
+        except ValueError as exc:
+            print(f"ERROR: {exc}")
+            return 1
+        if not _validate_backtest_environment_for_runtime(runtime):
+            return 1
+
+        _print_multi_personality_config(
+            args,
+            runtime["personalities"],
+            runtime["analysts"],
+            market=runtime["market"],
+            cashflow=runtime["cashflow"],
+        )
+        if runtime["config_path"]:
+            print(f"Using config: {runtime['config_path']}")
+
+        comparison = run_multi_personality_backtest(
+            tickers=runtime["tickers"],
+            start_date=args.start_date,
+            end_date=args.end_date,
+            personalities=runtime["personalities"],
+            initial_cash=runtime["cashflow"],
+            market=runtime["market"],
+            analysts=runtime["analysts"],
+            db_path="data/signal_flux.db",
+            config=runtime["config"],
+            use_llm=runtime["use_llm"],
+            max_workers=args.max_workers,
+        )
+        _print_multi_personality_results(comparison, runtime["cashflow"])
+        return 0
+
+    except ImportError as e:
+        print(f"ERROR: Failed to import multi-personality modules: {e}")
+        print("Make sure the backtest module is properly installed.")
+        import traceback
+        traceback.print_exc()
+        return 1
+    except Exception as e:
+        print(f"ERROR: Multi-personality backtest failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+def main() -> int:
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="Unified Agent Trading System",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    # Execution mode
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["deepear", "deepfund", "full", "backtest", "multi-personality"],
+        default="deepear",
+        help="Execution mode: deepear (intelligence), deepfund (trading), full (both), backtest, or multi-personality"
+    )
+
+    # DeepEar options
+    parser.add_argument(
+        "--query",
+        type=str,
+        help="User query/intent for DeepEar analysis"
+    )
+    parser.add_argument(
+        "--sources",
+        type=str,
+        default="all",
+        help="News sources: all, financial, social, tech, or comma-separated list"
+    )
+    parser.add_argument(
+        "--wide",
+        type=int,
+        default=10,
+        help="Number of news items per source"
+    )
+    parser.add_argument(
+        "--depth",
+        type=str,
+        default="auto",
+        help="Report depth: auto or integer limit"
+    )
+    parser.add_argument(
+        "--template",
+        type=str,
+        default="default_isq_v1",
+        help="ISQ template ID"
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Max workers for signal analysis"
+    )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        help="Custom run ID for logging"
+    )
+    parser.add_argument(
+        "--log-dir",
+        type=str,
+        help="Log directory"
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Log level"
+    )
+    parser.add_argument(
+        "--checkpoint-dir",
+        type=str,
+        help="Checkpoint directory"
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from checkpoint"
+    )
+    parser.add_argument(
+        "--resume-from",
+        type=str,
+        default="report",
+        choices=["report", "analysis"],
+        help="Resume from specific checkpoint stage"
+    )
+    parser.add_argument(
+        "--update-from",
+        type=str,
+        help="Update from previous run ID"
+    )
+
+    # DeepFund options
+    parser.add_argument(
+        "--market",
+        type=str,
+        choices=["cn", "us"],
+        default="cn",
+        help="Market type: cn (A-share) or us (US stocks)"
+    )
+    parser.add_argument(
+        "--date",
+        type=str,
+        help="Trading date in YYYY-MM-DD format"
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to configuration file"
+    )
+    parser.add_argument(
+        "--local-db",
+        action="store_true",
+        help="Use local SQLite database"
+    )
+
+    # Pipeline control
+    parser.add_argument(
+        "--skip-deepear",
+        action="store_true",
+        help="Skip DeepEar phase (full mode only)"
+    )
+    parser.add_argument(
+        "--skip-deepfund",
+        action="store_true",
+        help="Skip DeepFund phase (full mode only)"
+    )
+    parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="Continue pipeline even if a phase fails"
+    )
+
+    # Backtest options
+    parser.add_argument(
+        "--tickers",
+        type=str,
+        help="Comma-separated list of tickers for backtest (e.g., '600519,000858')"
+    )
+    parser.add_argument(
+        "--start-date",
+        type=str,
+        help="Start date for backtest in YYYY-MM-DD format"
+    )
+    parser.add_argument(
+        "--end-date",
+        type=str,
+        help="End date for backtest in YYYY-MM-DD format"
+    )
+    parser.add_argument(
+        "--cashflow",
+        type=float,
+        default=100000.0,
+        help="Initial capital for backtest (default: 100000)"
+    )
+    parser.add_argument(
+        "--prefetch-only",
+        action="store_true",
+        help="Only prefetch data without running backtest"
+    )
+    # LLM-powered backtest options
+    parser.add_argument(
+        "--use-llm",
+        action="store_true",
+        help="Enable LLM-based intelligent trading decisions (requires API keys)"
+    )
+    parser.add_argument(
+        "--analysts",
+        type=str,
+        default=DEFAULT_BACKTEST_ANALYSTS_ARG,
+        help="Comma-separated list of analysts for LLM backtest "
+             "(e.g., 'fundamental,technical,company_news'). "
+             "Available: fundamental, technical, company_news, insider, macroeconomic, policy, deepear_intelligence"
+    )
+    parser.add_argument(
+        "--personality",
+        type=str,
+        choices=VALID_PERSONALITIES,
+        default="balanced",
+        help="Investment personality for LLM backtest (default: balanced)"
+    )
+    parser.add_argument(
+        "--benchmark-mode",
+        type=str,
+        choices=["auto", "index", "equal_weight", "none"],
+        default="auto",
+        help="Benchmark mode: auto (index fallback), index, equal_weight, or none"
+    )
+    parser.add_argument(
+        "--benchmark-index",
+        type=str,
+        help="Benchmark index code (e.g., 000300.SH for CSI 300)"
+    )
+    # Multi-personality mode options
+    parser.add_argument(
+        "--personalities",
+        type=str,
+        default=DEFAULT_MULTI_PERSONALITIES_ARG,
+        help="Comma-separated list of personalities for multi-personality mode"
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help="Maximum parallel workers for multi-personality mode (default: auto)"
+    )
+
+    # Environment
+    parser.add_argument(
+        "--check-env",
+        action="store_true",
+        help="Check environment and exit"
+    )
+    parser.add_argument(
+        "--no-banner",
+        action="store_true",
+        help="Don't display banner"
+    )
+
+    args = parser.parse_args()
+    args._market_explicit = any(arg == "--market" or arg.startswith("--market=") for arg in sys.argv[1:])
+    args._analysts_explicit = any(arg == "--analysts" or arg.startswith("--analysts=") for arg in sys.argv[1:])
+    args._benchmark_mode_explicit = any(arg == "--benchmark-mode" or arg.startswith("--benchmark-mode=") for arg in sys.argv[1:])
+    args._benchmark_index_explicit = any(arg == "--benchmark-index" or arg.startswith("--benchmark-index=") for arg in sys.argv[1:])
+
+    # Handle check-env
+    if args.check_env:
+        if check_env_file():
+            print("✅ Environment file exists")
+        else:
+            print("⚠️  Environment file missing or incomplete")
+        return 0
+
+    # Print banner
+    if not args.no_banner:
+        print_banner()
+
+    # Route to appropriate mode
+    if args.mode == "deepear":
+        exit_code = run_deepear(args)
+    elif args.mode == "deepfund":
+        exit_code = run_deepfund(args)
+    elif args.mode == "full":
+        exit_code = run_full_pipeline(args)
+    elif args.mode == "backtest":
+        exit_code = run_backtest_mode(args)
+    elif args.mode == "multi-personality":
+        exit_code = run_multi_personality_mode(args)
+    else:
+        print("ERROR: Invalid mode. Use deepear, deepfund, full, backtest, or multi-personality.")
+        return 1
+
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

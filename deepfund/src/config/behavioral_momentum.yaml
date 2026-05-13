@@ -1,0 +1,34 @@
+# Deep Fund Configuration - Behavioral Momentum Paradigm (Scaffold)
+# Momentum-oriented placeholder config for upcoming dedicated engine work
+exp_name: "behavioral-momentum-test"
+
+# Investment personality
+personality: "behavioral_momentum"
+
+# Trading settings
+cashflow: 100000
+tickers:
+  - MSFT
+  - NVDA
+  - TSLA
+
+# Analysts to run
+workflow_analysts:
+  - technical
+  - company_news
+  - deepear_intelligence
+
+momentum:
+  target_vol: 0.15
+  vol_window: 21
+  market_ma_window: 60
+  crash_lookback_days: 5
+  crash_return_threshold: 0.04
+  crash_exposure_multiplier: 0.2
+  max_scaling: 1.5
+  min_scaling: 0.2
+
+# LLM settings
+llm:
+  provider: "YiZhan"
+  model: "deepseek-v3.2"

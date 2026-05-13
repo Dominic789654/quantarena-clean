@@ -1,0 +1,31 @@
+# Deep Fund Configuration for US stocks (FMP-first)
+exp_name: "us_dev"
+
+# Trading settings
+cashflow: 100000
+tickers:
+  - AAPL
+  - NVDA
+
+# Keep a lean analyst set for FMP free-tier experimentation
+workflow_analysts:
+  - fundamental
+  - technical
+  - company_news
+  - insider
+
+# LLM model settings
+llm:
+  provider: "DeepSeek"
+  model: "deepseek-chat"
+
+# Data source settings for US market
+api_source:
+  default: "fmp"  # Use FMP by default for US
+  us_source: "fmp"
+  cn_source: "tushare"
+
+# US-specific settings
+trading:
+  market: "US"
+  timezone: "America/New_York"

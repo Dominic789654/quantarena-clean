@@ -1,0 +1,13 @@
+{
+  "metrics": {
+    "total_return": 0.3,
+    "max_drawdown": 2.62,
+    "volatility": 5.04,
+    "sharpe_ratio": -0.22,
+    "avg_cash_ratio": 0.6955,
+    "avg_position_days": 69.73,
+    "avg_turnover_ratio": 0.0044,
+    "total_trades": 85,
+    "trading_days": 102
+  }
+}

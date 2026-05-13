@@ -1,0 +1,13 @@
+{
+  "run_id": "fixture_run",
+  "start_date": "2026-01-01",
+  "end_date": "2026-01-03",
+  "market": "us",
+  "initial_cash": 100000.0,
+  "metrics": {
+    "total_return": 1.5,
+    "max_drawdown": 0.4,
+    "sharpe_ratio": 1.2,
+    "avg_cash_ratio": 0.25
+  }
+}

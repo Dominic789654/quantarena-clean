@@ -1,0 +1,102 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+.venv2/
+venv/
+ENV/
+env/
+.conda/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Data cache (runtime generated)
+data/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+nohup.out
+experiments/
+
+# Reports (generated)
+reports/
+
+# Paper/release submission artifacts (local generated)
+/artifacts/
+/paper_build/
+/release_data/
+/release-data/
+/submission/
+/supplementary/
+/croissant*.json
+/*.pdf
+/*.zip
+/*.tar
+/*.tar.gz
+/*.tgz
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Ruff
+.ruff_cache/
+.dmux/
+# CocoIndex Code (ccc)
+/.cocoindex_code/
+
+# Local LaTeX artifacts
+/latex/
+
+# Local pi workspace artifacts
+/.pi/

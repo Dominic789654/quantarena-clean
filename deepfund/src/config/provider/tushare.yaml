@@ -1,0 +1,35 @@
+# Tushare API Configuration for A-Share Market
+# Sign up at: https://tushare.pro/register
+
+# Data provider info
+provider: "Tushare"
+description: "Chinese A-share market data provider"
+website: "https://tushare.pro"
+
+# API Token (required)
+# Get your token from: https://tushare.pro/user/token
+api_token: ""
+
+# API Limits (for reference, no need to configure)
+# Free tier: 120 requests/minute
+# Premium tier: Higher limits available
+
+# Supported markets
+markets:
+  - SH  # Shanghai Stock Exchange
+  - SZ  # Shenzhen Stock Exchange
+  - BJ  # Beijing Stock Exchange
+
+# Tushare data interfaces available
+interfaces:
+  - daily       # Daily行情
+  - daily_basic # Daily基本面指标
+  - stock_basic # Stock基本信息
+  - fina_indicator # 财务指标
+  - stk_holder_trade # 股东持股变动
+  - major_news # 重大新闻 (requires premium)
+
+# Notes:
+# 1. Set your TUSHARE_API_KEY environment variable with the token value
+# 2. Some data interfaces require premium membership
+# 3. Rate limits apply based on your account tier

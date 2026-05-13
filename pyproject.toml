@@ -1,0 +1,93 @@
+[project]
+name = "quantarena"
+version = "0.1.0"
+description = "QuantArena live-market evaluation toolkit"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # Core
+    "pyyaml",
+    "python-dotenv",
+    "pandas",
+    "numpy",
+    "scipy>=1.10",
+    "pydantic>=2.0",
+
+    # LLM
+    "langgraph",
+    "langchain-openai",
+    "langchain-anthropic",
+    "langchain-deepseek",
+    "langchain-ollama",
+    "openai>=1.0.0",
+    "ollama",
+
+    # Data APIs
+    "tushare",
+    "yfinance",
+    "requests",
+    "akshare",
+
+    # Database
+    "supabase>=2.0.0",
+
+    # Web/API
+    "fastapi",
+    "uvicorn",
+    "httpx",
+
+    # Agents/Tools
+    "agno",
+    "loguru",
+    "tavily-python",
+    "ddgs",
+    "baidusearch",
+    "pycountry",
+
+    # Sentiment/ML
+    "scikit-learn",
+    "jieba",
+    "rank-bm25",
+
+    # Utilities
+    "typing-extensions",
+    "python-dateutil",
+    "pyecharts",
+    "matplotlib",
+    "markdown",
+]
+
+[project.optional-dependencies]
+ml = [
+    "torch",
+    "transformers",
+    "sentence-transformers",
+]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+]
+full = [
+    "quantarena[dev,ml]",
+]
+
+[project.scripts]
+quantarena = "quantarena.cli:main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["deepear*", "deepfund*", "quantarena*", "shared*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "deepear/src", "deepfund/src", "shared"]

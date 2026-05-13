@@ -1,0 +1,31 @@
+# Strict FOF config for US ablation runs.
+# Intentionally keeps only FOF allocator settings so CLI-provided
+# market/tickers/analysts remain the controlling variables.
+
+fof:
+  sleeves:
+    - personality: conservative
+      weight: 0.20
+    - personality: balanced
+      weight: 0.40
+    - personality: aggressive
+      weight: 0.10
+    - personality: passive
+      weight: 0.30
+  base_weights:
+    conservative: 0.20
+    balanced: 0.40
+    aggressive: 0.10
+    passive: 0.30
+  max_sleeve_weight: 0.40
+  min_passive_weight: 0.20
+  active_weight_limit: 0.70
+  max_single_stock_weight: 0.15
+  regime_tilt: 0.10
+  min_rebalance_weight_delta: 0.02
+  min_rebalance_trade_value_ratio: 0.01
+  min_rebalance_shares: 1
+  bear_rebalance_threshold_multiplier: 1.5
+  volatile_rebalance_threshold_multiplier: 2.0
+  low_consensus_overlap_threshold: 0.35
+  low_consensus_threshold_multiplier: 1.5

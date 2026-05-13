@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QuantArena</title>
+    <meta
+      name="description"
+      content="QuantArena is an open research toolkit for policy-conditioned live-market evaluation of LLM trading agents."
+    >
+    <link rel="stylesheet" href="assets/site.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="QuantArena home">QuantArena</a>
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a href="#method">Method</a>
+        <a href="#results">Results</a>
+        <a href="#artifact">Artifact</a>
+        <a href="#quickstart">Quickstart</a>
+        <a class="nav-pill" href="https://github.com/Dominic789654/quantarena-clean">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <p class="eyebrow">Policy-conditioned live-market evaluation</p>
+        <h1>QuantArena</h1>
+        <p class="tagline">Benchmark the policy layer, not just the model.</p>
+        <p class="lead">
+          A controlled research toolkit for testing how executable investment
+          doctrines change LLM-assisted trading behavior when the backend,
+          market data, analyst workflow, capital, accounting, and execution
+          harness are held fixed.
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="https://github.com/Dominic789654/quantarena-clean">Code</a>
+          <a class="button" href="reproduction.md">Reproduction</a>
+          <a class="button" href="#quickstart">Install</a>
+          <a class="button" href="#results">Results</a>
+        </div>
+      </section>
+
+      <section class="paper-figure">
+        <figure>
+          <img src="assets/equity-curves.png" alt="Matched China and U.S. cumulative return paths for QuantArena mandates.">
+          <figcaption>
+            Matched six-month China A-share and U.S. equity case studies under a fixed execution protocol.
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="metrics" aria-label="Artifact scale">
+        <div><strong>40</strong><span>matched tickers</span></div>
+        <div><strong>226</strong><span>trading days</span></div>
+        <div><strong>5</strong><span>mandates</span></div>
+        <div><strong>9,040</strong><span>ticker-day decisions</span></div>
+      </section>
+
+      <section id="method" class="section">
+        <div class="section-title">
+          <p class="eyebrow">Method</p>
+          <h2>One arena, multiple executable doctrines.</h2>
+          <p>
+            QuantArena treats the investment mandate as the intervention. Each
+            mandate changes evidence routing, signal activation, risk budgets,
+            turnover discipline, and rebalance behavior while sharing the same
+            data and execution substrate.
+          </p>
+        </div>
+
+        <figure class="framed">
+          <img src="assets/system-flow.png" alt="QuantArena system flow showing fixed components, doctrine module, mandate-specific portfolios, and evaluation outputs.">
+        </figure>
+
+        <div class="card-grid five">
+          <article><b>FV</b><h3>Fundamental Value</h3><p>Valuation-first equity selection with quality and threshold discipline.</p></article>
+          <article><b>MT</b><h3>Macro Tactical</h3><p>Top-down regime and policy allocation across style sleeves.</p></article>
+          <article><b>BM</b><h3>Behavioral Momentum</h3><p>Trend and sentiment priority with short-horizon risk guardrails.</p></article>
+          <article><b>LV</b><h3>Low-Volatility</h3><p>Defensive smart-beta allocation with volatility and tracking controls.</p></article>
+          <article><b>EqW</b><h3>Equal-Weight</h3><p>Deterministic scheduled rebalancing as the within-protocol reference.</p></article>
+        </div>
+      </section>
+
+      <section id="results" class="section warm">
+        <div class="section-title">
+          <p class="eyebrow">Results</p>
+          <h2>Simple diversification leads, but doctrine still changes behavior.</h2>
+          <p>
+            Equal-Weight leads both matched windows; Macro Tactical is the
+            closest active mandate. The active profiles remain separable in cash
+            usage, turnover, holding period, and portfolio construction.
+          </p>
+        </div>
+
+        <div class="scoreboard">
+          <div><span>China EqW</span><strong>+6.50%</strong></div>
+          <div><span>U.S. EqW</span><strong>+9.42%</strong></div>
+          <div><span>China MT</span><strong>+4.02%</strong></div>
+          <div><span>U.S. MT</span><strong>+3.42%</strong></div>
+        </div>
+
+        <div class="figure-grid">
+          <figure>
+            <img src="assets/transfer-matrix.png" alt="U.S. minus China shift matrix for return, drawdown, turnover, cash, and holding period by mandate.">
+            <figcaption>Cross-market transfer: U.S. value minus China value by mandate.</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/trading-composition.png" alt="U.S. six-month cumulative trading composition by mandate and sector.">
+            <figcaption>Portfolio formation: ticker and sector composition over time.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="figure-grid">
+          <figure>
+            <img src="assets/backend-robustness.png" alt="Backend robustness bars for total return and average cash.">
+            <figcaption>Backend swap changes deployment intensity but not the main bracket.</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/decision-audit.png" alt="Decision output audit visualization.">
+            <figcaption>Decision-output audit over logged ticker-day decisions.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section id="artifact" class="section artifact">
+        <div class="section-title">
+          <p class="eyebrow">Artifact</p>
+          <h2>A compact codebase for controlled trading-agent experiments.</h2>
+          <p>
+            The release exposes a small runtime surface for smoke checks,
+            artifact validation, backtesting, policy profiles, and focused tests.
+          </p>
+        </div>
+
+        <div class="repo-grid">
+          <div><code>quantarena/</code><span>CLI and artifact validation</span></div>
+          <div><code>backtest/</code><span>metrics, mandate engines, reports</span></div>
+          <div><code>deepfund/</code><span>profiles, provider routing, execution</span></div>
+          <div><code>deepear/</code><span>intelligence workflow components</span></div>
+          <div><code>tests/</code><span>unit and regression coverage</span></div>
+        </div>
+      </section>
+
+      <section id="quickstart" class="section start">
+        <div class="section-title">
+          <p class="eyebrow">Quickstart</p>
+          <h2>Clone, install, smoke-test.</h2>
+        </div>
+        <pre><code>git clone https://github.com/Dominic789654/quantarena-clean.git
+cd quantarena-clean
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+python -m quantarena.cli smoke --json</code></pre>
+        <p class="disclaimer">
+          QuantArena is for academic study and controlled evaluation. It is not
+          financial advice, portfolio management advice, or a recommendation to trade.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>QuantArena</span>
+      <span>Policy-conditioned live-market evaluation for LLM trading systems.</span>
+    </footer>
+  </body>
+</html>

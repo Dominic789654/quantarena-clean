@@ -1,0 +1,67 @@
+# Deep Fund Configuration - FOF Personality
+# Fund-of-funds style allocation with diversified multi-sleeve exposure
+exp_name: "fof-test"
+
+# Investment personality
+personality: "fof"
+
+# Trading settings
+market: "us"
+cashflow: 100000
+tickers:
+  - MSFT
+  - NVDA
+  - TSLA
+
+# Analysts to run, refer to graph.constants.py
+workflow_analysts:
+  - fundamental
+  - company_news
+  - technical
+  - insider
+
+# Volcengine Ark API with deepseek-v3.2
+llm:
+  provider: "Ark"
+  model: "deepseek-v3.2"
+
+# Data source settings for US market
+api_source:
+  default: "fmp"
+  us_source: "fmp"
+  cn_source: "tushare"
+
+trading:
+  market: "US"
+  timezone: "America/New_York"
+
+# Backtest-oriented FOF meta-allocation settings
+fof:
+  sleeves:
+    - personality: conservative
+      weight: 0.20
+    - personality: balanced
+      weight: 0.40
+    - personality: aggressive
+      weight: 0.10
+    - personality: passive
+      weight: 0.30
+    # 也支持简单字符串写法，例如: - equal_weight
+    # 以及 enabled: false 来临时禁用某个 sleeve
+  base_weights:
+    conservative: 0.20
+    balanced: 0.40
+    aggressive: 0.10
+    passive: 0.30
+  max_sleeve_weight: 0.40
+  min_passive_weight: 0.20
+  active_weight_limit: 0.70
+  max_single_stock_weight: 0.15
+  regime_tilt: 0.10
+  min_rebalance_weight_delta: 0.02
+  min_rebalance_trade_value_ratio: 0.01
+  min_rebalance_shares: 1
+  bear_rebalance_threshold_multiplier: 1.5
+  volatile_rebalance_threshold_multiplier: 2.0
+  low_consensus_overlap_threshold: 0.35
+  low_consensus_threshold_multiplier: 1.5

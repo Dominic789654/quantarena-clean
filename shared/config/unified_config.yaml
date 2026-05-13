@@ -1,0 +1,195 @@
+# Unified Agent Trading Configuration
+# This is the template configuration file for the unified trading system
+# Copy this file to your local config and customize as needed
+
+# ============================================================================
+# LLM Configuration (Dual-Model Routing)
+# ============================================================================
+# The system uses two separate models to optimize costs and performance:
+# - Reasoning Model: For deep analysis, writing, and complex logic
+# - Tool Model: For tool calling, searching, and data fetching operations
+
+llm:
+  # Reasoning model configuration (primary model for analysis)
+  reasoning_model:
+    provider: openrouter  # options: openai, ollama, deepseek, dashscope, openrouter, zai, anthropic, fireworks
+    model_id: gpt-4o
+    host: ~  # Optional: specific host for reasoning model (e.g., http://127.0.0.1:11434 for Ollama)
+    api_key_env: OPENROUTER_API_KEY  # Environment variable name for API key
+
+  # Tool model configuration (secondary model for data operations)
+  tool_model:
+    provider: ollama
+    model_id: qwen3:latest
+    host: http://127.0.0.1:11434
+    api_key_env: ~  # Some providers don't require API keys (e.g., Ollama)
+
+  # Fallback/legacy configuration (used if dual-model routing is disabled)
+  default_model:
+    provider: openrouter
+    model_id: gpt-4o
+    host: ~
+
+# ============================================================================
+# Data Sources Configuration
+# ============================================================================
+# Configure market data providers for different markets
+
+data_sources:
+  # TuShare - Chinese A-share market data
+  tushare:
+    enabled: true
+    api_key_env: TUSHARE_API_KEY
+    description: "Chinese A-share market data provider"
+    website: "https://tushare.pro"
+    markets:
+      - SH  # Shanghai Stock Exchange
+      - SZ  # Shenzhen Stock Exchange
+      - BJ  # Beijing Stock Exchange
+    rate_limit: 120  # requests per minute for free tier
+
+  # Alpha Vantage - US and international market data
+  alpha_vantage:
+    enabled: true
+    api_key_env: ALPHA_VANTAGE_API_KEY
+    description: "US and international market data provider"
+    website: "https://www.alphavantage.co"
+    rate_limit: 5  # requests per minute for free tier
+
+  # AkShare - Alternative Chinese market data (no API key required)
+  akshare:
+    enabled: true
+    description: "Free Chinese market data provider"
+    website: "https://akshare.akfamily.xyz"
+
+# ============================================================================
+# DeepEar Configuration
+# ============================================================================
+# DeepEar transforms public opinion and news into investment logic
+
+deepear:
+  enabled: true
+
+  # Data sources for news and sentiment analysis
+  sources:
+    # Financial news sources
+    financial:
+      - cailian
+      - wallstreetcn
+      - eastmoney
+      - cls_cn
+    # Social media sources
+    social:
+      - weibo
+      - xueqiu
+    # Tech/blog sources
+    tech:
+      - 36kr
+      - ifanr
+
+  # Number of news items to fetch per source
+  news_per_source: 10
+
+  # ISQ (Investment Signal Quality) template
+  isq_template: default_isq_v1
+
+  # Sentiment analysis settings
+  sentiment:
+    mode: auto  # options: auto (priority BERT), bert, llm
+    bert_model: uer/roberta-base-finetuned-chinanews-chinese
+
+  # Search and extraction settings
+  search:
+    embedding_model: paraphrase-multilingual-MiniLM-L12-v2
+    cache_ttl: 3600  # Cache time for search results (seconds)
+    jina_api_key_env: JINA_API_KEY  # Optional: for Jina Search and Reader
+
+  # Skill server settings (for multi-instance deployment)
+  server:
+    default_port: 8001
+    instances: 1  # Number of parallel instances to run
+
+# ============================================================================
+# DeepFund Configuration
+# ============================================================================
+# DeepFund manages portfolio construction and trading decisions
+
+deepfund:
+  enabled: true
+
+  # Investment personality
+  personality: balanced  # options: conservative, aggressive, passive, balanced
+
+  # Position management
+  max_position_ratio: 0.33  # Maximum position size (0.0 to 1.0)
+  cashflow: 100000  # Initial capital
+
+  # Trading settings
+  trading_frequency: medium  # options: low, medium, high
+
+  # Analysts to run
+  workflow_analysts:
+    - fundamental
+    - company_news
+    - technical
+    - insider
+    - macroeconomic
+    - policy
+    - deepear_intelligence  # Integration with DeepEar
+
+  # Watchlist tickers
+  tickers: []  # Add your tickers here, e.g., ["MSFT", "NVDA", "TSLA"]
+
+# ============================================================================
+# Database Configuration
+# ============================================================================
+# Configure local and cloud database options
+
+database:
+  # Local SQLite database
+  local:
+    enabled: true
+    path: data/unified_trading.db
+
+  # Supabase cloud database (optional)
+  supabase:
+    enabled: false
+    url_env: SUPABASE_URL
+    key_env: SUPABASE_KEY
+
+# ============================================================================
+# Logging Configuration
+# ============================================================================
+
+logging:
+  level: INFO  # options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: logs/unified_trading.log
+  rotation: 10 MB  # Log file rotation size
+
+# ============================================================================
+# Report Configuration
+# ============================================================================
+
+reports:
+  output_dir: reports
+  format: markdown  # options: markdown, html, both
+  include_charts: true
+
+# ============================================================================
+# Advanced Settings
+# ============================================================================
+
+advanced:
+  # Checkpoint/resume support
+  checkpointing:
+    enabled: true
+    dir: .checkpoints
+
+  # Concurrency settings
+  max_workers: 4
+
+  # Cache settings
+  cache:
+    enabled: true
+    dir: .cache
+    ttl: 3600

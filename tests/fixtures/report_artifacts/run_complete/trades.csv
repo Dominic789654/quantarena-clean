@@ -1,0 +1,3 @@
+date,ticker,action,shares,price,value,justification
+2026-01-02,AAPL,BUY,10,150.0,1500.0,test buy
+2026-01-03,AAPL,SELL,2,155.0,310.0,test sell

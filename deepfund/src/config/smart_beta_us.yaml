@@ -1,0 +1,56 @@
+# Smart Beta Index Enhancement Configuration - US Market
+# Target: S&P 500 (^GSPC)
+
+# Index Configuration
+index_code: "^GSPC"
+rebalance_frequency: "monthly"
+
+# Factor Configuration
+lookback_days: 252
+ivol_percentile: 0.95  # Only exclude top 5% highest volatility (relaxed for US large-caps)
+amihud_threshold: 1.0  # Much higher threshold - US large-caps are highly liquid
+
+# Optimizer Configuration
+tracking_error_limit: 0.05  # Allow 5% tracking error (more flexibility)
+max_stock_weight: 0.15  # Up to 15% in any single stock (S&P is concentration-heavy)
+turnover_limit: 0.30
+min_weight: 0.001
+
+# Downside Risk Constraints
+downside_beta_gamma: 0.05  # Relaxed: β⁻ <= Benchmark β⁻ - 0.05
+require_downside_protection: true
+
+# Macro Adjustment Configuration
+macro_adjustment_range: [-0.3, 0.3]
+expansion_beta_target: 1.1
+slowdown_beta_target: 1.0
+recession_beta_target: 0.8
+recovery_beta_target: 1.2
+
+# News Freeze Configuration
+vix_threshold: 35.0  # Slightly higher VIX threshold for US market
+market_drop_threshold: -0.05
+freeze_duration_days: 5
+crisis_keywords:
+  - "crisis"
+  - "collapse"
+  - "panic"
+  - "black swan"
+  - "systemic risk"
+  - "credit crunch"
+  - "liquidity crisis"
+
+# Market Parameters
+risk_free_rate: 0.045  # ~4.5% US risk-free rate (T-bill)
+market_days_per_year: 252
+
+# Factor Weights
+factor_weights:
+  dimson_beta: 0.25
+  downside_beta: 0.25
+  ivol: 0.25
+  amihud: 0.25
+
+# LLM Integration
+llm_adjustment_enabled: true
+llm_weight_cap: 0.1

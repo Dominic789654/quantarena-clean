@@ -1,0 +1,41 @@
+# Deep Fund Configuration
+exp_name: "dev"
+
+# Trading settings
+cashflow: 100000
+tickers:
+  - TSLA
+  - NVDA
+
+
+# Analysts to run, refer to graph.constants.py
+workflow_analysts:
+  - fundamental
+  - macroeconomic
+  - technical
+  - company_news
+  - insider
+  - policy
+  - deepear_intelligence
+
+# LLM model settings, refer to llm/inference.py: LLMConfig
+llm:
+  provider: "DeepSeek"
+  model: "deepseek-chat" # DeepSeek-V3
+
+# Data source settings
+api_source:
+  default: "alpha_vantage"  # For US stocks (can switch to "fmp")
+  us_source: "alpha_vantage"
+  cn_source: "tushare"  # For Chinese A-shares
+
+# DeepEar integration settings
+deepear:
+  enabled: true
+  path: "./deepear"
+  sources:
+    - cls  # Cailian Press
+    - wallstreetcn
+    - xueqiu
+    - weibo
+  max_signals: 10

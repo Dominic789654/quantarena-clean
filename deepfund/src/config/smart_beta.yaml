@@ -1,0 +1,56 @@
+# Smart Beta Index Enhancement Configuration
+# Target: CSI 300 (000300.SH)
+
+# Index Configuration
+index_code: "000300.SH"
+rebalance_frequency: "monthly"  # monthly or quarterly
+
+# Factor Configuration
+lookback_days: 252  # ~1 year of trading data for factor calculation
+ivol_percentile: 0.80  # Exclude stocks in top 20% idiosyncratic volatility
+amihud_threshold: 0.01  # Maximum acceptable Amihud illiquidity ratio
+
+# Optimizer Configuration
+tracking_error_limit: 0.03  # Maximum 3% tracking error
+max_stock_weight: 0.05  # Maximum 5% weight for any single stock
+turnover_limit: 0.30  # Maximum 30% turnover per rebalance
+min_weight: 0.001  # Minimum weight threshold
+
+# Downside Risk Constraints
+downside_beta_gamma: 0.1  # Portfolio β⁻ <= Benchmark β⁻ - γ
+require_downside_protection: true
+
+# Macro Adjustment Configuration
+macro_adjustment_range: [-0.3, 0.3]  # Beta adjustment range
+expansion_beta_target: 1.1  # Beta target in expansion phase
+slowdown_beta_target: 1.0  # Beta target in slowdown phase
+recession_beta_target: 0.8  # Beta target in recession phase
+recovery_beta_target: 1.2  # Beta target in recovery phase
+
+# News Freeze Configuration
+vix_threshold: 30.0  # VIX threshold for news freeze
+market_drop_threshold: -0.05  # Single-day market drop threshold
+freeze_duration_days: 5  # Duration of trading freeze
+crisis_keywords:
+  - "crisis"
+  - "collapse"
+  - "panic"
+  - "black swan"
+  - "systemic risk"
+  - "credit crunch"
+  - "liquidity crisis"
+
+# Market Parameters
+risk_free_rate: 0.03  # 3% annual risk-free rate
+market_days_per_year: 252  # Trading days per year
+
+# Factor Weights (for composite scoring)
+factor_weights:
+  dimson_beta: 0.25
+  downside_beta: 0.25
+  ivol: 0.25
+  amihud: 0.25
+
+# LLM Integration
+llm_adjustment_enabled: true  # Enable LLM-based fine-tuning
+llm_weight_cap: 0.1  # Maximum 10% adjustment from LLM

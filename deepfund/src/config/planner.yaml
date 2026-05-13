@@ -1,0 +1,21 @@
+# Deep Fund Configuration
+exp_name: "planner-test"
+
+# Trading settings
+cashflow: 100000
+tickers:
+  - TSLA
+  - NVDA
+
+# true: run planner agent, choose from workflow_analysts
+planner_mode: true
+workflow_analysts:
+- technical
+- company_news
+- insider
+- policy
+
+# LLM model settings, refer to llm/inference.py: LLMConfig
+llm:
+  provider: "DeepSeek" 
+  model: "deepseek-chat" # DeepSeek-V3

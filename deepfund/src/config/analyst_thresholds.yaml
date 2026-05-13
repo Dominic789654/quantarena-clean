@@ -1,0 +1,59 @@
+# Analyst Thresholds Configuration
+# Centralized threshold values for all analysts
+#
+# Usage:
+#   from util.threshold_config import ThresholdConfig
+#   config = ThresholdConfig()
+#   technical_thresholds = config.get_thresholds("technical")
+
+# Technical Analyst Thresholds
+# Used by: deepfund/src/agents/analysts/technical.py
+technical:
+  trend:
+    short: 8          # Short-term EMA period
+    medium: 21        # Medium-term EMA period
+    long: 55          # Long-term EMA period
+
+  mean_reversion:
+    bollinger_window: 20        # Bollinger Bands window
+    rolling_window: 50          # Z-score rolling window
+    z_score_extreme: 2.0        # Extreme z-score threshold
+    bb_position_threshold: 0.2   # Bollinger Band position threshold
+
+  rsi:
+    period: 14        # RSI calculation period
+    bullish: 30       # Oversold threshold (buy signal)
+    bearish: 70       # Overbought threshold (sell signal)
+
+  volatility:
+    bullish: 0.8      # Low volatility regime threshold
+    bearish: 1.2      # High volatility regime threshold
+
+  volume:
+    trend: 20         # Volume MA window
+    correlation: 20   # Price-volume correlation window
+    unusual_volume: 2.0  # Unusual volume multiplier
+
+  support_resistance:
+    pivot_window: 5      # Pivot point window
+    lookback_period: 20  # Support/resistance lookback
+
+# Policy Analyst Thresholds
+# Used by: deepfund/src/agents/analysts/policy.py
+policy:
+  news_count: 10  # Number of policy news articles to fetch
+
+# Company News Analyst Thresholds
+# Used by: deepfund/src/agents/analysts/company_news.py
+company_news:
+  news_count: 10  # Number of company news articles to fetch
+
+# Insider Analyst Thresholds
+# Used by: deepfund/src/agents/analysts/insider.py
+insider:
+  num_trades: 10  # Number of insider trades to analyze
+
+# Default thresholds for analysts without specific config
+default:
+  news_count: 10
+  lookback_days: 30

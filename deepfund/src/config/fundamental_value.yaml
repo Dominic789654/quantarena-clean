@@ -1,0 +1,32 @@
+# Deep Fund Configuration - Fundamental Value Paradigm (Scaffold)
+# Value-oriented placeholder config for upcoming dedicated engine work
+exp_name: "fundamental-value-test"
+
+# Investment personality
+personality: "fundamental_value"
+
+# Trading settings
+cashflow: 100000
+tickers:
+  - MSFT
+  - NVDA
+  - TSLA
+
+# Analysts to run
+workflow_analysts:
+  - fundamental
+  - company_news
+  - technical
+
+value_filter:
+  max_ev_to_ebitda: 15.0
+  min_fscore_lite: 3
+  require_positive_roa: true
+  require_positive_ocf: true
+  min_current_ratio: 1.0
+  require_positive_profit_margin: false
+
+# LLM settings
+llm:
+  provider: "YiZhan"
+  model: "deepseek-v3.2"

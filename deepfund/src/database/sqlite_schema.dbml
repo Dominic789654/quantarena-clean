@@ -1,0 +1,72 @@
+// Database schema for DeepFund
+
+Table config {
+  id varchar(36) [pk]
+  exp_name varchar(100) [not null]
+  updated_at timestamp [default: `CURRENT_TIMESTAMP`]
+  tickers json [not null]
+  has_planner boolean [not null, default: false]
+  llm_model varchar(50) [not null]
+  llm_provider varchar(50) [not null]
+
+  indexes {
+    exp_name
+  }
+}
+
+Table portfolio {
+  id varchar(36) [pk]
+  config_id varchar(36) [ref: > config.id, not null]
+  updated_at timestamp [default: `CURRENT_TIMESTAMP`]
+  trading_date timestamp [not null]
+  cashflow decimal(15,2) [not null]
+  total_assets decimal(15,2) [not null]
+  positions json [not null]
+
+  indexes {
+    updated_at
+    trading_date
+  }
+}
+
+Table decision {
+  id varchar(36) [pk]
+  portfolio_id varchar(36) [ref: > portfolio.id, not null]
+  updated_at timestamp [default: `CURRENT_TIMESTAMP`]
+  trading_date timestamp [not null]
+  ticker varchar(10) [not null]
+  llm_prompt text [not null]
+  action varchar(10) [not null]
+  shares integer [not null]
+  price decimal(15,2) [not null]
+  justification text [not null]
+
+  indexes {
+    portfolio_id
+    updated_at
+    trading_date
+  }
+}
+
+Table signal {
+  id varchar(36) [pk]
+  portfolio_id varchar(36) [ref: > portfolio.id, not null]
+  updated_at timestamp [default: `CURRENT_TIMESTAMP`]
+  ticker varchar(10) [not null]
+  llm_prompt text [not null]
+  analyst varchar(50) [not null]
+  signal varchar(10) [not null]
+  justification text [not null]
+
+  indexes {
+    portfolio_id
+    updated_at
+    analyst
+  }
+}
+
+// Relationships explained:
+// Config is the root table that defines experiment settings
+// Each config can have multiple portfolio snapshots
+// Signals are now directly linked to portfolios for faster querying
+// All text fields are NOT NULL to ensure data integrity

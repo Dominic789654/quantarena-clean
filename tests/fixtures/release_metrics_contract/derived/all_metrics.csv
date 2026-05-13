@@ -1,0 +1,4 @@
+experiment,market,mandate_dir,display_name,start_date,end_date,total_return,max_drawdown,volatility,sharpe_ratio,avg_cash_ratio,avg_position_days,total_trades,trading_days
+exp1_caseStudy_cn_6m,cn,equal_weight,Equal-Weight,2025-09-01,2026-02-28,6.5,6.25,15.15,0.97,0.0138,91.74,84,102
+exp1_caseStudy_cn_6m,cn,low_volatility,Low-Volatility,2025-09-01,2026-02-28,0.3,2.62,5.04,-0.22,0.6955,69.73,85,102
+exp1_caseStudy_us_6m,us,macro_tactical,Macro Tactical,2025-09-01,2026-02-28,3.42,4.4,9.02,0.58,0.3624,17.96,1763,124

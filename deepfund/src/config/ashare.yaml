@@ -1,0 +1,46 @@
+# Deep Fund Configuration for A-Share Market
+exp_name: "ashare_dev"
+
+# Trading settings
+cashflow: 100000
+tickers:
+  - 600519  # Kweichow Moutai
+  - 000858  # Wuliangye
+  - 300750  # Contemporary Amperex
+
+# Analysts to run, refer to graph.constants.py
+workflow_analysts:
+  - fundamental
+  - technical
+  - deepear_intelligence
+
+# LLM model settings, refer to llm/inference.py: LLMConfig
+llm:
+  provider: "DeepSeek"
+  model: "deepseek-chat"
+
+# Data source settings for A-shares
+api_source:
+  default: "tushare"  # Use Tushare for A-shares
+  fallback: "alpha_vantage"  # Fallback for US stocks
+
+# DeepEar integration settings (for A-share intelligence)
+deepear:
+  enabled: true
+  path: "./deepear"
+  sources:
+    - cls  # Cailian Press (财联社)
+    - wallstreetcn  # Wall Street CN (华尔街见闻)
+    - xueqiu  # Xueqiu (雪球)
+    - eastmoney  # Eastmoney (东方财富)
+    - 10jqka  # Tonghuashun (同花顺)
+  max_signals: 10
+  cache_ttl: 3600  # Cache time in seconds
+
+# A-share specific settings
+trading:
+  market: "CN"
+  timezone: "Asia/Shanghai"
+  trading_hours:
+    morning: ["09:30", "11:30"]
+    afternoon: ["13:00", "15:00"]

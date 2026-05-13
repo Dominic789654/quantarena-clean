@@ -1,0 +1,110 @@
+# A-share experiment universe for paper-style backtests
+# 5 sectors x 4 stocks, excluding micro-cap names where possible.
+exp_name: "ashare_experiment_universe"
+personality: "balanced"
+market: "cn"
+cashflow: 100000
+
+# Tickers are derived from experiment_universe when not provided explicitly.
+experiment_universe:
+  name: "ashare_5x4_style_matrix"
+  description: "Five-sector A-share universe with large/mid and value/growth buckets."
+  selection_rules:
+    exclude_st: true
+    exclude_micro_caps: true
+    min_median_daily_turnover_cny_mn: 100
+    note: "Use liquid names to reduce microstructure noise in agent evaluations."
+  sectors:
+    - name: financials
+      thesis: "Rate-sensitive defensive exposure"
+      stocks:
+        - ticker: "600036"
+          label: "China Merchants Bank"
+          bucket: "large_value"
+        - ticker: "601166"
+          label: "Industrial Bank"
+          bucket: "large_growth"
+        - ticker: "000001"
+          label: "Ping An Bank"
+          bucket: "mid_value"
+        - ticker: "002142"
+          label: "Bank of Ningbo"
+          bucket: "mid_growth"
+    - name: consumer
+      thesis: "Domestic demand and pricing power"
+      stocks:
+        - ticker: "600519"
+          label: "Kweichow Moutai"
+          bucket: "large_value"
+        - ticker: "000858"
+          label: "Wuliangye"
+          bucket: "large_growth"
+        - ticker: "600887"
+          label: "Yili"
+          bucket: "mid_value"
+        - ticker: "002311"
+          label: "Haitian Foods"
+          bucket: "mid_growth"
+    - name: technology
+      thesis: "Innovation, policy support, and high-beta growth"
+      stocks:
+        - ticker: "300750"
+          label: "CATL"
+          bucket: "large_value"
+        - ticker: "002415"
+          label: "Hikvision"
+          bucket: "large_growth"
+        - ticker: "603986"
+          label: "GigaDevice"
+          bucket: "mid_value"
+        - ticker: "688111"
+          label: "BE Semiconductor-style proxy"
+          bucket: "mid_growth"
+    - name: healthcare
+      thesis: "Independent product and policy cycle"
+      stocks:
+        - ticker: "300760"
+          label: "Mindray"
+          bucket: "large_value"
+        - ticker: "600276"
+          label: "Hengrui Medicine"
+          bucket: "large_growth"
+        - ticker: "300347"
+          label: "TaiGe"
+          bucket: "mid_value"
+        - ticker: "300122"
+          label: "Zhifei Bio"
+          bucket: "mid_growth"
+    - name: industrials
+      thesis: "Macro and capex sensitivity"
+      stocks:
+        - ticker: "601899"
+          label: "Zijin Mining"
+          bucket: "large_value"
+        - ticker: "600309"
+          label: "Wanhua Chemical"
+          bucket: "large_growth"
+        - ticker: "601100"
+          label: "Hengli Hydraulics"
+          bucket: "mid_value"
+        - ticker: "002353"
+          label: "Jiecang Drive"
+          bucket: "mid_growth"
+
+workflow_analysts:
+  - fundamental
+  - technical
+  - company_news
+  - deepear_intelligence
+
+llm:
+  provider: "DeepSeek"
+  model: "deepseek-chat"
+
+api_source:
+  default: "tushare"
+  cn_source: "tushare"
+
+trading:
+  market: "CN"
+  timezone: "Asia/Shanghai"

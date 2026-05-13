@@ -1,0 +1,60 @@
+# Deep Fund Configuration - Macro Tactical Allocation Paradigm
+exp_name: "macro-tactical-test"
+
+# Investment personality
+personality: "macro_tactical"
+
+# Trading settings
+market: "us"
+cashflow: 100000
+tickers:
+  - MSFT
+  - NVDA
+  - TSLA
+
+# Analysts to run
+workflow_analysts:
+  - macroeconomic
+  - policy
+  - fundamental
+  - technical
+  - company_news
+
+# LLM settings
+llm:
+  provider: "Ark"
+  model: "deepseek-v3.2"
+
+# Backtest-oriented tactical overlay settings
+macro_tactical:
+  short_window: 20
+  crash_window: 5
+  long_ma_window: 60
+  bull_return_threshold: 0.03
+  bear_return_threshold: -0.05
+  volatile_rally_threshold: 0.04
+  high_vol_threshold: 0.25
+  inflation_hot_threshold: 3.5
+  unemployment_bad_threshold: 6.0
+  rate_tight_threshold: 4.5
+
+fof:
+  sleeves:
+    - personality: conservative
+      weight: 0.20
+    - personality: balanced
+      weight: 0.40
+    - personality: aggressive
+      weight: 0.10
+    - personality: passive
+      weight: 0.30
+  base_weights:
+    conservative: 0.20
+    balanced: 0.40
+    aggressive: 0.10
+    passive: 0.30
+  max_sleeve_weight: 0.40
+  min_passive_weight: 0.20
+  active_weight_limit: 0.70
+  max_single_stock_weight: 0.15
+  regime_tilt: 0.10
