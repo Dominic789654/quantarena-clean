@@ -285,6 +285,82 @@ def _validate_raw_response(raw_response: Any, model_cls: Type[BaseModel]) -> Opt
         return None
 
 
+def _json_output_example(model_cls: Type[BaseModel]) -> Dict[str, Any]:
+    """Build a compact JSON example for provider JSON-mode prompts."""
+    try:
+        example = _safe_model_fallback(model_cls).model_dump(mode="json")
+        return example if isinstance(example, dict) else {}
+    except Exception:
+        return {field_name: None for field_name in getattr(model_cls, "model_fields", {})}
+
+
+def _compact_json_schema(model_cls: Type[BaseModel]) -> Dict[str, Any]:
+    """Return only field-level schema details that are useful in a prompt."""
+    try:
+        schema = model_cls.model_json_schema()
+    except Exception:
+        return {}
+
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return schema if isinstance(schema, dict) else {}
+
+    required = set(schema.get("required") or [])
+    compact: Dict[str, Any] = {}
+    for field_name, metadata in properties.items():
+        if not isinstance(metadata, dict):
+            compact[field_name] = {"required": field_name in required}
+            continue
+        field_schema: Dict[str, Any] = {"required": field_name in required}
+        for key in ("type", "description", "enum", "anyOf", "$ref"):
+            if key in metadata:
+                field_schema[key] = metadata[key]
+        compact[field_name] = field_schema
+    return compact
+
+
+def _build_json_output_prompt(prompt: str, model_cls: Type[BaseModel]) -> str:
+    """
+    Add provider-visible JSON instructions for APIs that require prompt guidance.
+
+    DeepSeek JSON Output requires response_format={"type": "json_object"} plus
+    the word "json" and a concrete JSON example in the prompt. LangChain sets
+    response_format for json_mode; this wrapper supplies the prompt contract.
+    """
+    example = json.dumps(_json_output_example(model_cls), ensure_ascii=False, indent=2)
+    schema = json.dumps(_compact_json_schema(model_cls), ensure_ascii=False, separators=(",", ":"))
+    return (
+        "Return only valid JSON. Do not include markdown fences, comments, or explanatory text. "
+        "The JSON object must match the requested schema and use the exact field names.\n\n"
+        "EXAMPLE JSON OUTPUT:\n"
+        f"{example}\n\n"
+        "JSON SCHEMA FIELDS:\n"
+        f"{schema}\n\n"
+        "USER TASK:\n"
+        f"{prompt}"
+    )
+
+
+def _structured_prompt_for_method(
+    prompt: str,
+    method: str,
+    provider: str,
+    model_cls: Type[BaseModel],
+) -> str:
+    if method == "json_mode" and provider == "deepseek":
+        return _build_json_output_prompt(prompt, model_cls)
+    return prompt
+
+
+def _structured_methods_for_provider(provider: str, model_id: str) -> list[str]:
+    if provider == "deepseek":
+        return ["json_mode"]
+    if "doubao" in model_id or "seed" in model_id:
+        return ["json_mode", "function_calling"]
+    if "qwen" in model_id or provider in ["alibaba", "dashscope"]:
+        return ["json_mode"]
+    return ["function_calling", "json_mode"]
+
 def _default_value_for_field(field_name: str, annotation: Any) -> Any:
     """Generate a safe placeholder for required Pydantic fields."""
     lower_name = field_name.lower()
@@ -471,39 +547,26 @@ def agent_call(
         record_token_usage(agent_name, estimated_input, estimated_output, provider_name)
         return _safe_model_fallback(pydantic_model)
 
-    # Try different structured output methods based on model support
-    # Some models (like doubao) don't support function_calling
-    # Qwen models don't support tool_choice='required' or object form
-    model_id = llm_config.get('model', '').lower()
-    provider = llm_config.get('provider', '').lower()
-
-    # First: try with structured output methods
-    structured_methods = []
-    if 'doubao' in model_id or 'seed' in model_id:
-        # Use json_mode first for doubao/seed models
-        structured_methods = ['json_mode', 'function_calling']
-    elif 'qwen' in model_id or provider in ['alibaba', 'dashscope']:
-        # Qwen models: json_mode only (function_calling uses unsupported tool_choice)
-        structured_methods = ['json_mode']
-    else:
-        # Default: try function_calling first
-        structured_methods = ['function_calling', 'json_mode']
+    model_id = llm_config.get("model", "").lower()
+    provider = llm_config.get("provider", "").lower()
+    structured_methods = _structured_methods_for_provider(provider, model_id)
 
     for attempt in range(llm_cfg.max_retries):
         # Try structured methods first
         for method in structured_methods:
             try:
                 llm_structured = llm.with_structured_output(pydantic_model, method=method)
-                result = llm_structured.invoke(prompt)
+                structured_prompt = _structured_prompt_for_method(prompt, method, provider, pydantic_model)
+                result = llm_structured.invoke(structured_prompt)
                 if result is None:
                     raise ValueError("LLM returned None")
 
                 # Try to estimate tokens based on prompt and response length
                 response_str = str(result.model_dump()) if hasattr(result, 'model_dump') else str(result)
-                estimated_input, estimated_output = _estimate_tokens(prompt, response_str)
+                estimated_input, estimated_output = _estimate_tokens(structured_prompt, response_str)
 
                 try:
-                    raw_response = llm.invoke(prompt)
+                    raw_response = llm.invoke(structured_prompt)
                     if hasattr(raw_response, 'usage_metadata') and raw_response.usage_metadata:
                         estimated_input = raw_response.usage_metadata.get('input_tokens', estimated_input)
                         estimated_output = raw_response.usage_metadata.get('output_tokens', estimated_output)
@@ -525,11 +588,12 @@ def agent_call(
         # Structured methods failed - try raw text with fallback
         try:
             logger.warning(f"Attempt {attempt + 1}/{llm_cfg.max_retries}: All structured methods failed, trying raw text fallback")
-            raw_response = llm.invoke(prompt)
+            fallback_prompt = _build_json_output_prompt(prompt, pydantic_model) if provider == "deepseek" else prompt
+            raw_response = llm.invoke(fallback_prompt)
 
             # Try to estimate tokens
             response_str = _response_to_text(raw_response)
-            estimated_input, estimated_output = _estimate_tokens(prompt, response_str)
+            estimated_input, estimated_output = _estimate_tokens(fallback_prompt, response_str)
 
             record_token_usage(agent_name, estimated_input, estimated_output, provider_name)
 

@@ -48,6 +48,44 @@ class _JsonFallbackLLM(_AlwaysFailLLM):
     def invoke(self, prompt: str):
         return _RawResponse(self._content)
 
+class _RecordingStructured:
+    def __init__(self, response):
+        self.response = response
+        self.prompts = []
+
+    def invoke(self, prompt: str):
+        self.prompts.append(prompt)
+        return self.response
+
+
+class _RecordingLLM:
+    def __init__(self, response):
+        self.structured = _RecordingStructured(response)
+        self.methods = []
+
+    def with_structured_output(self, model, method=None):
+        self.methods.append(method)
+        return self.structured
+
+    def invoke(self, prompt: str):
+        return _RawResponse('{"action": "HOLD", "shares": 0, "reasoning": "usage probe"}')
+
+
+class _RecordingRawLLM(_AlwaysFailLLM):
+    def __init__(self, content: str):
+        self.prompts = []
+        self.methods = []
+        self._content = content
+
+    def with_structured_output(self, model, method=None):
+        self.methods.append(method)
+        return _AlwaysFailStructured()
+
+    def invoke(self, prompt: str):
+        self.prompts.append(prompt)
+        return _RawResponse(self._content)
+
+
 
 def test_agent_call_returns_required_model_and_records_tokens_on_total_failure(monkeypatch):
     monkeypatch.setattr(inference, "get_model", lambda cfg: _AlwaysFailLLM())
@@ -164,3 +202,44 @@ def test_agent_call_validates_markdown_wrapped_json_from_raw_fallback(monkeypatc
     assert result.action == "SELL"
     assert result.shares == 3
     assert result.reasoning == "Risk limits were breached"
+
+
+def test_deepseek_uses_json_mode_prompt_contract(monkeypatch):
+    llm = _RecordingLLM(RequiredDecision(action="BUY", shares=4, reasoning="valid json"))
+    monkeypatch.setattr(inference, "get_model", lambda cfg: llm)
+
+    inference.reset_token_tracker()
+    result = inference.agent_call(
+        prompt="portfolio decision without magic keyword",
+        llm_config={"provider": "DeepSeek", "model": "deepseek-v4-flash", "max_retries": 1},
+        pydantic_model=RequiredDecision,
+        agent_name="deepseek_json_contract",
+    )
+
+    assert result.action == "BUY"
+    assert result.shares == 4
+    assert llm.methods == ["json_mode"]
+    structured_prompt = llm.structured.prompts[0]
+    assert "Return only valid JSON" in structured_prompt
+    assert "EXAMPLE JSON OUTPUT" in structured_prompt
+    assert '"action"' in structured_prompt
+    assert "portfolio decision without magic keyword" in structured_prompt
+
+
+def test_deepseek_raw_fallback_uses_json_prompt_contract(monkeypatch):
+    llm = _RecordingRawLLM('{"action": "SELL", "shares": 2, "reasoning": "risk"}')
+    monkeypatch.setattr(inference, "get_model", lambda cfg: llm)
+
+    inference.reset_token_tracker()
+    result = inference.agent_call(
+        prompt="portfolio decision",
+        llm_config={"provider": "deepseek", "model": "deepseek-v4-flash", "max_retries": 1},
+        pydantic_model=RequiredDecision,
+        agent_name="deepseek_json_raw_fallback",
+    )
+
+    assert result.action == "SELL"
+    assert result.shares == 2
+    assert llm.methods == ["json_mode"]
+    assert "Return only valid JSON" in llm.prompts[0]
+    assert "EXAMPLE JSON OUTPUT" in llm.prompts[0]
