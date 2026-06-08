@@ -189,7 +189,7 @@ def test_smoke_command_reports_project_layout(capsys):
 
 
 def test_provider_smoke_command_reports_skip_without_credentials(monkeypatch, capsys):
-    monkeypatch.delenv("FMP_API_KEY", raising=False)
+    monkeypatch.setenv("FMP_API_KEY", "")
 
     exit_code = main(
         [

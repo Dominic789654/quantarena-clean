@@ -170,6 +170,71 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print machine-readable smoke-check output",
     )
 
+    paper_parser = subparsers.add_parser(
+        "paper",
+        help="Operate the local persistent paper portfolio",
+    )
+    paper_parser.add_argument(
+        "--state",
+        type=Path,
+        help="Paper portfolio state path; defaults to data/paper_portfolio/state.json",
+    )
+    paper_subparsers = paper_parser.add_subparsers(dest="paper_command", required=True)
+
+    paper_init_parser = paper_subparsers.add_parser("init", help="Initialize paper portfolio state")
+    paper_init_parser.add_argument("--cash", type=float, required=True, help="Initial paper cash")
+    paper_init_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace an existing paper state file",
+    )
+
+    paper_subparsers.add_parser("account", help="Show paper account snapshot")
+    paper_subparsers.add_parser("positions", help="Show paper positions")
+
+    paper_orders_parser = paper_subparsers.add_parser("orders", help="List paper orders")
+    paper_orders_parser.add_argument("--status", help="Optional order status filter")
+    paper_orders_parser.add_argument("--symbol", help="Optional symbol filter")
+
+    paper_quote_parser = paper_subparsers.add_parser("quote", help="Manage paper quotes")
+    paper_quote_subparsers = paper_quote_parser.add_subparsers(dest="paper_quote_command", required=True)
+    paper_quote_set_parser = paper_quote_subparsers.add_parser("set", help="Set a paper quote")
+    paper_quote_set_parser.add_argument("symbol", help="Ticker symbol")
+    paper_quote_set_parser.add_argument("price", type=float, help="Last quote price")
+    paper_quote_list_parser = paper_quote_subparsers.add_parser("list", help="List paper quotes")
+    paper_quote_list_parser.add_argument("symbols", nargs="*", help="Optional symbols to list")
+
+    paper_order_parser = paper_subparsers.add_parser("order", help="Manage paper orders")
+    paper_order_subparsers = paper_order_parser.add_subparsers(dest="paper_order_command", required=True)
+    paper_order_submit_parser = paper_order_subparsers.add_parser("submit", help="Submit a paper order")
+    paper_order_submit_parser.add_argument("--symbol", required=True, help="Ticker symbol")
+    paper_order_submit_parser.add_argument(
+        "--side",
+        required=True,
+        choices=["BUY", "SELL", "buy", "sell"],
+        help="Order side",
+    )
+    paper_order_submit_parser.add_argument("--shares", type=int, required=True, help="Order shares")
+    paper_order_submit_parser.add_argument("--limit", type=float, required=True, help="Limit price")
+    paper_order_submit_parser.add_argument("--justification", default="", help="Order justification")
+
+    paper_order_fill_parser = paper_order_subparsers.add_parser("fill", help="Fill a paper order")
+    paper_order_fill_parser.add_argument("order_id", help="Paper order id")
+    paper_order_fill_parser.add_argument("--qty", type=int, help="Fill quantity; defaults to remaining")
+    paper_order_fill_parser.add_argument("--price", type=float, help="Fill price; defaults to limit")
+
+    paper_order_cancel_parser = paper_order_subparsers.add_parser("cancel", help="Cancel a paper order")
+    paper_order_cancel_parser.add_argument("order_id", help="Paper order id")
+
+    paper_reconcile_parser = paper_subparsers.add_parser("reconcile", help="Reconcile expected paper state")
+    paper_reconcile_parser.add_argument("--cash", type=float, required=True, help="Expected cash")
+    paper_reconcile_parser.add_argument(
+        "--position",
+        action="append",
+        default=[],
+        help="Expected position as SYMBOL:SHARES; repeatable",
+    )
+
     return parser
 
 
@@ -236,6 +301,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             date=args.date,
             as_json=args.json,
         )
+
+    if args.command == "paper":
+        return run_paper_command(args)
 
     parser.error(f"Unsupported command: {args.command}")
     return 2
@@ -378,6 +446,73 @@ def run_provider_smoke(
             print(f"reason: {result.reason}")
 
     return 0 if result.ok else 1
+
+
+def run_paper_command(args: argparse.Namespace) -> int:
+    """Run a local paper portfolio command."""
+    from trading.paper_portfolio import PaperPortfolioManager
+
+    manager = PaperPortfolioManager(state_path=args.state)
+    try:
+        result = _dispatch_paper_command(manager, args)
+    except Exception as exc:
+        result = {
+            "ok": False,
+            "command": getattr(args, "paper_command", "paper"),
+            "result": {},
+            "error": str(exc),
+        }
+    else:
+        result = result.to_dict()
+
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result["ok"] else 1
+
+
+def _dispatch_paper_command(manager: object, args: argparse.Namespace):
+    if args.paper_command == "init":
+        return manager.init(initial_cash=args.cash, overwrite=args.overwrite)
+    if args.paper_command == "account":
+        return manager.account()
+    if args.paper_command == "positions":
+        return manager.positions()
+    if args.paper_command == "orders":
+        return manager.orders(status=args.status, symbol=args.symbol)
+    if args.paper_command == "quote" and args.paper_quote_command == "set":
+        return manager.set_quote(symbol=args.symbol, price=args.price)
+    if args.paper_command == "quote" and args.paper_quote_command == "list":
+        return manager.quotes(symbols=list(args.symbols or []))
+    if args.paper_command == "order" and args.paper_order_command == "submit":
+        return manager.submit_order(
+            symbol=args.symbol,
+            side=args.side,
+            shares=args.shares,
+            limit_price=args.limit,
+            justification=args.justification,
+        )
+    if args.paper_command == "order" and args.paper_order_command == "fill":
+        return manager.fill_order(order_id=args.order_id, quantity=args.qty, price=args.price)
+    if args.paper_command == "order" and args.paper_order_command == "cancel":
+        return manager.cancel_order(order_id=args.order_id)
+    if args.paper_command == "reconcile":
+        return manager.reconcile(
+            expected_cash=args.cash,
+            expected_positions=_parse_expected_positions(args.position),
+        )
+    raise ValueError(f"unsupported paper command: {args.paper_command}")
+
+
+def _parse_expected_positions(items: Sequence[str]) -> dict[str, int]:
+    positions: dict[str, int] = {}
+    for item in items:
+        if ":" not in item:
+            raise ValueError(f"invalid position '{item}', expected SYMBOL:SHARES")
+        symbol, shares_text = item.split(":", 1)
+        symbol = symbol.strip().upper()
+        if not symbol:
+            raise ValueError(f"invalid position symbol in '{item}'")
+        positions[symbol] = int(shares_text)
+    return positions
 
 
 if __name__ == "__main__":
