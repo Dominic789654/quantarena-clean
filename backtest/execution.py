@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, Callable, Dict
+
+from trading import (
+    MarketSnapshot,
+    PortfolioSnapshot,
+    PositionSnapshot,
+    PreTradeRiskEngine,
+    RiskLimits,
+    RiskReason,
+)
 
 
 TradeRecorder = Callable[[str, str, str, int, float, str], None]
 OrderTradeRecorder = Callable[[str, str, str, int, float], None]
 SnapshotRecorder = Callable[[str, float, Dict[str, Any], Dict[str, float]], None]
 WarningSink = Callable[[str], None]
+
+_BACKTEST_RISK_ENGINE = PreTradeRiskEngine(RiskLimits(require_market_open=False))
 
 
 def convert_targets_to_trades(
@@ -80,6 +92,77 @@ def _portfolio_value(*, current_portfolio: Dict, prices: Dict[str, float]) -> fl
     return total_value
 
 
+def _portfolio_snapshot(*, current_portfolio: Dict[str, Any], ticker: str, price: float) -> PortfolioSnapshot:
+    positions = {}
+    for symbol, position in current_portfolio.get("positions", {}).items():
+        shares = int(position.get("shares", 0) or 0)
+        value = float(position.get("value", 0.0) or 0.0)
+        if symbol == ticker and price > 0:
+            value = shares * price
+        positions[symbol.upper()] = PositionSnapshot(shares=shares, market_value=value)
+    return PortfolioSnapshot(
+        cash=float(current_portfolio.get("cashflow", 0.0) or 0.0),
+        positions=positions,
+        total_value=None,
+    )
+
+
+def _decision(action: str, shares: int, price: float, justification: str = "") -> SimpleNamespace:
+    return SimpleNamespace(action=action, shares=shares, price=price, justification=justification)
+
+
+def _risk_reason_values(reasons: tuple[RiskReason, ...]) -> list[str]:
+    return [reason.value for reason in reasons]
+
+
+def _risk_hold(reason: str, validation_reasons: tuple[RiskReason, ...]) -> Dict:
+    return {
+        "action": "HOLD",
+        "shares": 0,
+        "justification": reason,
+        "_applied": True,
+        "_risk_reasons": _risk_reason_values(validation_reasons),
+    }
+
+
+def _validate_backtest_order(
+    *,
+    current_portfolio: Dict[str, Any],
+    ticker: str,
+    action: str,
+    shares: int,
+    price: float,
+    justification: str = "",
+):
+    return _BACKTEST_RISK_ENGINE.validate_decision(
+        symbol=ticker,
+        decision=_decision(action, shares, price, justification),
+        portfolio=_portfolio_snapshot(current_portfolio=current_portfolio, ticker=ticker, price=price),
+        market=MarketSnapshot(latest_price=price, is_open=True),
+    )
+
+
+def _direct_warning(ticker: str, action: str, reasons: tuple[RiskReason, ...]) -> str:
+    if action == "buy" and RiskReason.CASH_LIMIT in reasons:
+        return f"Insufficient cash for {ticker} buy"
+    if action == "sell" and (
+        RiskReason.POSITION_LIMIT in reasons or RiskReason.SHORT_NOT_ALLOWED in reasons
+    ):
+        return f"Insufficient shares for {ticker} sell"
+    joined = ",".join(_risk_reason_values(reasons)) or "unknown"
+    return f"Risk gate rejected {ticker} {action}: {joined}"
+
+
+def _target_reason(default: str, reasons: tuple[RiskReason, ...]) -> str:
+    if RiskReason.CASH_LIMIT in reasons:
+        return "Insufficient cash for target allocation"
+    if RiskReason.POSITION_LIMIT in reasons or RiskReason.SHORT_NOT_ALLOWED in reasons:
+        return "No shares to sell"
+    if RiskReason.INVALID_PRICE in reasons:
+        return "Invalid price for target allocation"
+    return default
+
+
 def execute_buy_order(
     *,
     current_portfolio: Dict[str, Any],
@@ -90,20 +173,27 @@ def execute_buy_order(
     record_trade: OrderTradeRecorder,
     warn: WarningSink,
 ) -> bool:
-    """Apply a plain BUY order to portfolio state and record the trade."""
-    cost = shares * price
-    if cost > current_portfolio["cashflow"]:
-        warn(f"Insufficient cash for {ticker} buy")
+    """Apply a plain BUY order to portfolio state after risk validation."""
+    validation = _validate_backtest_order(
+        current_portfolio=current_portfolio,
+        ticker=ticker,
+        action="BUY",
+        shares=shares,
+        price=price,
+    )
+    if validation.rejected or validation.order is None or validation.adjusted_shares != shares:
+        warn(_direct_warning(ticker, "buy", validation.reasons))
         return False
 
+    cost = validation.order.shares * validation.order.limit_price
     current_portfolio["cashflow"] -= cost
-    current_shares = current_portfolio["positions"][ticker]["shares"]
-    new_shares = current_shares + shares
+    current_shares = current_portfolio["positions"].get(ticker, {}).get("shares", 0)
+    new_shares = current_shares + validation.order.shares
     current_portfolio["positions"][ticker] = {
         "shares": new_shares,
-        "value": round(new_shares * price, 2),
+        "value": round(new_shares * validation.order.limit_price, 2),
     }
-    record_trade(date, ticker, "BUY", shares, price)
+    record_trade(date, ticker, "BUY", validation.order.shares, validation.order.limit_price)
     return True
 
 
@@ -117,24 +207,31 @@ def execute_sell_order(
     record_trade: OrderTradeRecorder,
     warn: WarningSink,
 ) -> bool:
-    """Apply a plain SELL order to portfolio state and record the trade."""
+    """Apply a plain SELL order to portfolio state after risk validation."""
+    validation = _validate_backtest_order(
+        current_portfolio=current_portfolio,
+        ticker=ticker,
+        action="SELL",
+        shares=shares,
+        price=price,
+    )
+    if validation.rejected or validation.order is None:
+        warn(_direct_warning(ticker, "sell", validation.reasons))
+        return False
+    if validation.adjusted_shares != shares:
+        warn(_direct_warning(ticker, "sell", validation.reasons))
+
     current_pos = current_portfolio["positions"].get(ticker, {})
     current_shares = current_pos.get("shares", 0)
-    if shares > current_shares:
-        warn(f"Insufficient shares for {ticker} sell")
-        shares = current_shares
-
-    if shares <= 0:
-        return False
-
-    proceeds = shares * price
+    sell_shares = validation.order.shares
+    proceeds = sell_shares * validation.order.limit_price
     current_portfolio["cashflow"] += proceeds
-    new_shares = current_shares - shares
+    new_shares = current_shares - sell_shares
     current_portfolio["positions"][ticker] = {
         "shares": new_shares,
-        "value": round(new_shares * price, 2),
+        "value": round(new_shares * validation.order.limit_price, 2),
     }
-    record_trade(date, ticker, "SELL", shares, price)
+    record_trade(date, ticker, "SELL", sell_shares, validation.order.limit_price)
     return True
 
 
@@ -169,28 +266,31 @@ def _apply_target_buy(
     date: str,
     record_trade: TradeRecorder,
 ) -> Dict:
-    max_affordable = int(current_portfolio["cashflow"] / current_price) if current_price > 0 else 0
-    buy_shares = min(shares_diff, max_affordable)
-    if buy_shares <= 0:
-        return {
-            "action": "HOLD",
-            "shares": 0,
-            "justification": "Insufficient cash for target allocation",
-            "_applied": True,
-        }
-
     justification = f"Target allocation: {target_ratio:.1%} (current: {current_shares} shares)"
-    current_portfolio["cashflow"] -= buy_shares * current_price
+    validation = _validate_backtest_order(
+        current_portfolio=current_portfolio,
+        ticker=ticker,
+        action="BUY",
+        shares=shares_diff,
+        price=current_price,
+        justification=justification,
+    )
+    if validation.rejected or validation.order is None:
+        return _risk_hold(_target_reason("Insufficient cash for target allocation", validation.reasons), validation.reasons)
+
+    buy_shares = validation.order.shares
+    current_portfolio["cashflow"] -= buy_shares * validation.order.limit_price
     current_portfolio["positions"][ticker] = {
         "shares": current_shares + buy_shares,
-        "value": (current_shares + buy_shares) * current_price,
+        "value": (current_shares + buy_shares) * validation.order.limit_price,
     }
-    record_trade(date, ticker, "BUY", buy_shares, current_price, justification)
+    record_trade(date, ticker, "BUY", buy_shares, validation.order.limit_price, justification)
     return {
         "action": "BUY",
         "shares": buy_shares,
         "justification": justification,
         "_applied": True,
+        "_risk_reasons": _risk_reason_values(validation.reasons),
     }
 
 
@@ -206,26 +306,30 @@ def _apply_target_sell(
     record_trade: TradeRecorder,
 ) -> Dict:
     sell_shares = abs(shares_diff)
-    actual_sell = min(sell_shares, current_shares)
-    if actual_sell <= 0:
-        return {
-            "action": "HOLD",
-            "shares": 0,
-            "justification": "No shares to sell",
-            "_applied": True,
-        }
-
     justification = f"Target allocation: {target_ratio:.1%} (current: {current_shares} shares)"
-    current_portfolio["cashflow"] += actual_sell * current_price
+    validation = _validate_backtest_order(
+        current_portfolio=current_portfolio,
+        ticker=ticker,
+        action="SELL",
+        shares=sell_shares,
+        price=current_price,
+        justification=justification,
+    )
+    if validation.rejected or validation.order is None:
+        return _risk_hold(_target_reason("No shares to sell", validation.reasons), validation.reasons)
+
+    actual_sell = validation.order.shares
+    current_portfolio["cashflow"] += actual_sell * validation.order.limit_price
     new_shares = current_shares - actual_sell
     current_portfolio["positions"][ticker] = {
         "shares": new_shares,
-        "value": new_shares * current_price,
+        "value": new_shares * validation.order.limit_price,
     }
-    record_trade(date, ticker, "SELL", actual_sell, current_price, justification)
+    record_trade(date, ticker, "SELL", actual_sell, validation.order.limit_price, justification)
     return {
         "action": "SELL",
         "shares": actual_sell,
         "justification": justification,
         "_applied": True,
+        "_risk_reasons": _risk_reason_values(validation.reasons),
     }

@@ -21,7 +21,8 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Use `quantarena run --help` to forward to the research experiment runner. "
             "Use `quantarena evaluate --root release_data --json` for offline artifact checks; "
-            "`quantarena artifact ...` exposes the granular validation and summary commands."
+            "`quantarena artifact ...` exposes granular validation; "
+            "`quantarena report visualize --root <run-dir>` writes an offline HTML report page."
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -103,6 +104,36 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Print machine-readable summary output",
+    )
+
+    report_parser = subparsers.add_parser(
+        "report",
+        help="Inspect generated backtest reports",
+    )
+    report_subparsers = report_parser.add_subparsers(dest="report_command", required=True)
+    visualize_parser = report_subparsers.add_parser(
+        "visualize",
+        help="Generate a standalone HTML visualizer for a backtest report directory",
+    )
+    visualize_parser.add_argument(
+        "--root",
+        type=Path,
+        required=True,
+        help="Backtest report directory containing metrics.json, equity_curve.csv, and trades.csv",
+    )
+    visualize_parser.add_argument(
+        "--output",
+        type=Path,
+        help="HTML output path; defaults to <root>/backtest_visualizer.html",
+    )
+    visualize_parser.add_argument(
+        "--title",
+        help="Optional page title",
+    )
+    visualize_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable visualization output",
     )
 
     provider_parser = subparsers.add_parser(
@@ -188,6 +219,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "artifact" and args.artifact_command == "summary":
         return run_artifact_summary(root=args.root, as_json=args.json)
+
+    if args.command == "report" and args.report_command == "visualize":
+        return run_report_visualize(
+            root=args.root,
+            output=args.output,
+            title=args.title,
+            as_json=args.json,
+        )
 
     if args.command == "provider" and args.provider_command == "smoke":
         return run_provider_smoke(
@@ -275,6 +314,37 @@ def run_artifact_summary(*, root: Path, as_json: bool = False) -> int:
             print(f"warning: {warning}")
 
     return 0
+
+
+def run_report_visualize(
+    *,
+    root: Path,
+    output: Path | None = None,
+    title: str | None = None,
+    as_json: bool = False,
+) -> int:
+    """Generate an offline HTML visualizer for a backtest report directory."""
+    from quantarena.backtest_visualizer import write_backtest_visualizer
+
+    result = write_backtest_visualizer(root=root, output=output, title=title)
+    payload = result.to_dict()
+    if as_json:
+        print(json.dumps(payload, sort_keys=True))
+    else:
+        if result.ok:
+            print("QuantArena backtest visualizer generated")
+            print(f"output: {result.output}")
+            if result.run_id:
+                print(f"run_id: {result.run_id}")
+            if result.tickers:
+                print(f"tickers: {', '.join(result.tickers)}")
+        else:
+            print("QuantArena backtest visualizer failed", file=sys.stderr)
+            print(f"output: {result.output}", file=sys.stderr)
+            for error in result.errors:
+                print(f"error: {error['path']}: {error['message']}", file=sys.stderr)
+
+    return 0 if result.ok else 1
 
 
 def run_provider_smoke(

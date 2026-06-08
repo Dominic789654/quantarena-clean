@@ -82,7 +82,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["deepear*", "deepfund*", "quantarena*", "shared*"]
+include = ["deepear*", "deepfund*", "quantarena*", "shared*", "trading*"]
 
 [tool.ruff]
 line-length = 100

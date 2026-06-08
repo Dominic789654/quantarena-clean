@@ -132,6 +132,53 @@ def test_execute_sell_order_returns_false_when_no_shares_after_clamp():
     assert warnings == ["Insufficient shares for AAA sell"]
 
 
+def test_execute_buy_order_rejects_invalid_price_with_risk_warning():
+    portfolio = {
+        "cashflow": 1000.0,
+        "positions": {"AAA": {"shares": 0, "value": 0.0}},
+    }
+    recorded = []
+    warnings = []
+
+    applied = execute_buy_order(
+        current_portfolio=portfolio,
+        date="2026-01-02",
+        ticker="AAA",
+        shares=1,
+        price=0.0,
+        record_trade=lambda *args: recorded.append(args),
+        warn=warnings.append,
+    )
+
+    assert applied is False
+    assert recorded == []
+    assert warnings == ["Risk gate rejected AAA buy: invalid_price"]
+
+
+def test_execute_sell_order_rejects_invalid_price_with_risk_warning():
+    portfolio = {
+        "cashflow": 1000.0,
+        "positions": {"AAA": {"shares": 2, "value": 20.0}},
+    }
+    recorded = []
+    warnings = []
+
+    applied = execute_sell_order(
+        current_portfolio=portfolio,
+        date="2026-01-02",
+        ticker="AAA",
+        shares=1,
+        price=0.0,
+        record_trade=lambda *args: recorded.append(args),
+        warn=warnings.append,
+    )
+
+    assert applied is False
+    assert portfolio["positions"]["AAA"] == {"shares": 2, "value": 20.0}
+    assert recorded == []
+    assert warnings == ["Risk gate rejected AAA sell: invalid_price"]
+
+
 def test_record_portfolio_snapshot_updates_marked_values_and_records_snapshot():
     portfolio = {
         "cashflow": 1000.0,
@@ -247,6 +294,7 @@ def test_convert_targets_to_trades_clamps_buy_to_available_cash():
 
     assert decisions["AAA"]["action"] == "BUY"
     assert decisions["AAA"]["shares"] == 2
+    assert decisions["AAA"]["_risk_reasons"] == ["cash_limit"]
     assert portfolio["cashflow"] == 5.0
     assert portfolio["positions"]["AAA"] == {"shares": 2, "value": 20.0}
     assert recorded[0][:5] == ("2026-01-02", "AAA", "BUY", 2, 10.0)
@@ -344,6 +392,7 @@ def test_convert_targets_to_trades_holds_when_cash_is_insufficient():
         "shares": 0,
         "justification": "Insufficient cash for target allocation",
         "_applied": True,
+        "_risk_reasons": ["cash_limit"],
     }
     assert recorded == []
 
@@ -372,7 +421,7 @@ def test_convert_targets_to_trades_holds_when_price_is_zero_and_no_position():
     assert recorded == []
 
 
-def test_convert_targets_to_trades_preserves_zero_price_liquidation_status_quo():
+def test_convert_targets_to_trades_rejects_zero_price_liquidation():
     portfolio = {
         "cashflow": 1000.0,
         "positions": {"AAA": {"shares": 5, "value": 0.0}},
@@ -387,11 +436,16 @@ def test_convert_targets_to_trades_preserves_zero_price_liquidation_status_quo()
         record_trade=lambda *args: recorded.append(args),
     )
 
-    assert decisions["AAA"]["action"] == "SELL"
-    assert decisions["AAA"]["shares"] == 5
+    assert decisions["AAA"] == {
+        "action": "HOLD",
+        "shares": 0,
+        "justification": "Invalid price for target allocation",
+        "_applied": True,
+        "_risk_reasons": ["invalid_price"],
+    }
     assert portfolio["cashflow"] == 1000.0
-    assert portfolio["positions"]["AAA"] == {"shares": 0, "value": 0.0}
-    assert recorded[0][:5] == ("2026-01-02", "AAA", "SELL", 5, 0.0)
+    assert portfolio["positions"]["AAA"] == {"shares": 5, "value": 0.0}
+    assert recorded == []
 
 
 def test_convert_targets_to_trades_uses_sequential_cash_for_multiple_buys():
@@ -419,6 +473,7 @@ def test_convert_targets_to_trades_uses_sequential_cash_for_multiple_buys():
         "shares": 0,
         "justification": "Insufficient cash for target allocation",
         "_applied": True,
+        "_risk_reasons": ["cash_limit"],
     }
     assert portfolio["cashflow"] == 0.0
     assert portfolio["positions"]["AAA"] == {"shares": 10, "value": 100.0}
