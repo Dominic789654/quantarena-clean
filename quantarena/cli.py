@@ -170,6 +170,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print machine-readable smoke-check output",
     )
 
+    live_parser = subparsers.add_parser(
+        "live",
+        help="Inspect a read-only live broker adapter",
+    )
+    live_parser.add_argument(
+        "--provider",
+        help="Live read-only provider; defaults to QUANTARENA_LIVE_READONLY_PROVIDER or snapshot",
+    )
+    live_parser.add_argument(
+        "--snapshot",
+        type=Path,
+        help="Snapshot JSON path for the snapshot live read-only provider",
+    )
+    live_subparsers = live_parser.add_subparsers(dest="live_command", required=True)
+    live_subparsers.add_parser("smoke", help="Run a read-only live broker smoke check")
+    live_subparsers.add_parser("account", help="Show live account snapshot")
+    live_subparsers.add_parser("positions", help="Show live positions")
+    live_orders_parser = live_subparsers.add_parser("orders", help="List live orders")
+    live_orders_parser.add_argument("--status", help="Optional order status filter")
+    live_orders_parser.add_argument("--symbol", help="Optional symbol filter")
+    live_quotes_parser = live_subparsers.add_parser("quotes", help="Show live quotes")
+    live_quotes_parser.add_argument("symbols", nargs="*", help="Optional symbols to request")
+
     paper_parser = subparsers.add_parser(
         "paper",
         help="Operate the local persistent paper portfolio",
@@ -302,6 +325,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             date=args.date,
             as_json=args.json,
         )
+
+    if args.command == "live":
+        return run_live_command(args)
 
     if args.command == "paper":
         return run_paper_command(args)
@@ -468,6 +494,40 @@ def run_paper_command(args: argparse.Namespace) -> int:
 
     print(json.dumps(result, sort_keys=True))
     return 0 if result["ok"] else 1
+
+
+def run_live_command(args: argparse.Namespace) -> int:
+    """Run a read-only live broker command."""
+    from trading.live_readonly import LiveReadonlyBrokerManager, LiveReadonlyConfig
+
+    try:
+        config = LiveReadonlyConfig.from_env(provider=args.provider, snapshot_path=args.snapshot)
+        manager = LiveReadonlyBrokerManager(config=config)
+        result = _dispatch_live_command(manager, args).to_dict()
+    except Exception as exc:
+        result = {
+            "ok": False,
+            "command": getattr(args, "live_command", "live"),
+            "result": {},
+            "error": str(exc),
+        }
+
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result["ok"] else 1
+
+
+def _dispatch_live_command(manager: object, args: argparse.Namespace):
+    if args.live_command == "smoke":
+        return manager.smoke()
+    if args.live_command == "account":
+        return manager.account()
+    if args.live_command == "positions":
+        return manager.positions()
+    if args.live_command == "orders":
+        return manager.orders(status=args.status, symbol=args.symbol)
+    if args.live_command == "quotes":
+        return manager.quotes(symbols=list(args.symbols or []))
+    raise ValueError(f"unsupported live command: {args.live_command}")
 
 
 def _dispatch_paper_command(manager: object, args: argparse.Namespace):
