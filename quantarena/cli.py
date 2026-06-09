@@ -189,6 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Replace an existing paper state file",
     )
 
+    paper_subparsers.add_parser("smoke", help="Run a deterministic paper portfolio smoke check")
     paper_subparsers.add_parser("account", help="Show paper account snapshot")
     paper_subparsers.add_parser("positions", help="Show paper positions")
 
@@ -472,6 +473,8 @@ def run_paper_command(args: argparse.Namespace) -> int:
 def _dispatch_paper_command(manager: object, args: argparse.Namespace):
     if args.paper_command == "init":
         return manager.init(initial_cash=args.cash, overwrite=args.overwrite)
+    if args.paper_command == "smoke":
+        return manager.smoke()
     if args.paper_command == "account":
         return manager.account()
     if args.paper_command == "positions":

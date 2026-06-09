@@ -50,6 +50,8 @@ class PaperBroker:
         order_store: InMemoryOrderStore | None = None,
         allow_short: bool = False,
         allow_negative_cash: bool = False,
+        next_order_sequence: int = 1,
+        next_fill_sequence: int = 1,
     ) -> None:
         self.cash = float(initial_cash)
         self.positions: dict[str, int] = {
@@ -63,8 +65,10 @@ class PaperBroker:
         self.order_store = order_store or InMemoryOrderStore()
         self.allow_short = allow_short
         self.allow_negative_cash = allow_negative_cash
-        self._order_counter = count(1)
-        self._fill_counter = count(1)
+        self._next_order_sequence = max(1, int(next_order_sequence))
+        self._next_fill_sequence = max(1, int(next_fill_sequence))
+        self._order_counter = count(self._next_order_sequence)
+        self._fill_counter = count(self._next_fill_sequence)
 
     def submit_order(self, intent: OrderIntent) -> BrokerOrder:
         """Submit a paper order and immediately accept or reject it."""
@@ -227,7 +231,21 @@ class PaperBroker:
         return shares * price
 
     def _next_order_id(self) -> str:
-        return f"paper-{next(self._order_counter):06d}"
+        sequence = next(self._order_counter)
+        self._next_order_sequence = sequence + 1
+        return f"paper-{sequence:06d}"
 
     def _next_fill_id(self) -> str:
-        return f"fill-{next(self._fill_counter):06d}"
+        sequence = next(self._fill_counter)
+        self._next_fill_sequence = sequence + 1
+        return f"fill-{sequence:06d}"
+
+    @property
+    def next_order_sequence(self) -> int:
+        """Return the sequence value that will be used for the next order id."""
+        return self._next_order_sequence
+
+    @property
+    def next_fill_sequence(self) -> int:
+        """Return the sequence value that will be used for the next fill id."""
+        return self._next_fill_sequence

@@ -1,5 +1,7 @@
 """Tests for shared execution helpers."""
 
+from trading import PaperBroker
+
 from backtest.execution import (
     convert_targets_to_trades,
     execute_buy_order,
@@ -31,6 +33,34 @@ def test_execute_buy_order_updates_portfolio_and_records_trade():
     assert portfolio["positions"]["AAA"] == {"shares": 5, "value": 50.0}
     assert recorded == [("2026-01-02", "AAA", "BUY", 3, 10.0)]
     assert warnings == []
+
+
+def test_execute_buy_order_routes_through_paper_broker(monkeypatch):
+    portfolio = {
+        "cashflow": 1000.0,
+        "positions": {"AAA": {"shares": 0, "value": 0.0}},
+    }
+    submitted = []
+    original_submit_order = PaperBroker.submit_order
+
+    def tracking_submit_order(self, intent):
+        submitted.append((intent.symbol, intent.side.value, intent.shares, intent.limit_price))
+        return original_submit_order(self, intent)
+
+    monkeypatch.setattr(PaperBroker, "submit_order", tracking_submit_order)
+
+    applied = execute_buy_order(
+        current_portfolio=portfolio,
+        date="2026-01-02",
+        ticker="AAA",
+        shares=3,
+        price=10.0,
+        record_trade=lambda *args: None,
+        warn=lambda _message: None,
+    )
+
+    assert applied is True
+    assert submitted == [("AAA", "BUY", 3, 10.0)]
 
 
 def test_execute_buy_order_rejects_insufficient_cash():

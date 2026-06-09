@@ -49,6 +49,73 @@ def test_paper_portfolio_manager_reports_reconciliation_difference(tmp_path: Pat
     assert {item["kind"] for item in result.result["differences"]} == {"cash", "position"}
 
 
+def test_paper_portfolio_reload_preserves_order_and_fill_id_sequences(tmp_path: Path):
+    state_path = tmp_path / "paper_state.json"
+    manager = PaperPortfolioManager(state_path)
+    manager.init(initial_cash=1000.0)
+    first = manager.submit_order(symbol="AAPL", side="BUY", shares=2, limit_price=100.0)
+    first_order_id = first.result["order"]["order_id"]
+    first_fill = manager.fill_order(order_id=first_order_id, quantity=1, price=100.0)
+
+    reloaded = PaperPortfolioManager(state_path)
+    second = reloaded.submit_order(symbol="MSFT", side="BUY", shares=1, limit_price=50.0)
+    second_fill = reloaded.fill_order(
+        order_id=second.result["order"]["order_id"],
+        quantity=1,
+        price=50.0,
+    )
+
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert first_order_id == "paper-000001"
+    assert first_fill.result["fill"]["fill_id"] == "fill-000001"
+    assert second.result["order"]["order_id"] == "paper-000002"
+    assert second_fill.result["fill"]["fill_id"] == "fill-000002"
+    assert payload["next_order_sequence"] == 3
+    assert payload["next_fill_sequence"] == 3
+
+
+def test_paper_portfolio_legacy_state_derives_next_sequences(tmp_path: Path):
+    state_path = tmp_path / "legacy_paper_state.json"
+    manager = PaperPortfolioManager(state_path)
+    manager.init(initial_cash=1000.0)
+    first = manager.submit_order(symbol="AAPL", side="BUY", shares=1, limit_price=100.0)
+    manager.fill_order(order_id=first.result["order"]["order_id"], quantity=1, price=100.0)
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload.pop("next_order_sequence")
+    payload.pop("next_fill_sequence")
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    reloaded = PaperPortfolioManager(state_path)
+    second = reloaded.submit_order(symbol="MSFT", side="BUY", shares=1, limit_price=50.0)
+    second_fill = reloaded.fill_order(order_id=second.result["order"]["order_id"])
+
+    assert second.result["order"]["order_id"] == "paper-000002"
+    assert second_fill.result["fill"]["fill_id"] == "fill-000002"
+
+
+def test_paper_portfolio_manager_smoke_runs_lifecycle(tmp_path: Path):
+    state_path = tmp_path / "paper_smoke.json"
+    manager = PaperPortfolioManager(state_path)
+
+    result = manager.smoke()
+
+    commands = [step["command"] for step in result.result["steps"]]
+    assert result.ok is True
+    assert commands == [
+        "init",
+        "quote.set",
+        "order.submit",
+        "order.fill",
+        "account",
+        "positions",
+        "orders",
+        "quotes",
+        "reconcile",
+    ]
+    assert state_path.is_file()
+    assert result.result["steps"][-1]["ok"] is True
+
+
 def test_paper_cli_end_to_end_json_payloads(tmp_path: Path, capsys):
     state = tmp_path / "paper.json"
 
@@ -102,6 +169,19 @@ def test_paper_cli_end_to_end_json_payloads(tmp_path: Path, capsys):
     assert payloads[-1]["ok"] is True
     assert payloads[-1]["command"] == "reconcile"
     assert payloads[-2]["result"]["orders"][0]["status"] == "filled"
+
+
+def test_paper_cli_smoke_returns_json_payload(tmp_path: Path, capsys):
+    state = tmp_path / "paper_smoke.json"
+
+    exit_code = main(["paper", "--state", str(state), "smoke"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["ok"] is True
+    assert payload["command"] == "smoke"
+    assert payload["result"]["steps"][-1]["command"] == "reconcile"
+    assert state.is_file()
 
 
 def test_paper_cli_failure_returns_nonzero_json(tmp_path: Path, capsys):

@@ -7,6 +7,8 @@ from typing import Any, Callable, Dict
 
 from trading import (
     MarketSnapshot,
+    BrokerOrderStatus,
+    PaperBroker,
     PortfolioSnapshot,
     PositionSnapshot,
     PreTradeRiskEngine,
@@ -163,6 +165,77 @@ def _target_reason(default: str, reasons: tuple[RiskReason, ...]) -> str:
     return default
 
 
+def _paper_broker_from_portfolio(
+    *,
+    current_portfolio: Dict[str, Any],
+    prices: Dict[str, float],
+) -> PaperBroker:
+    positions = {
+        symbol: int(position.get("shares", 0) or 0)
+        for symbol, position in current_portfolio.get("positions", {}).items()
+    }
+    quotes = {
+        symbol: price
+        for symbol, price in prices.items()
+        if price is not None and price > 0
+    }
+    return PaperBroker(
+        initial_cash=float(current_portfolio.get("cashflow", 0.0) or 0.0),
+        positions=positions,
+        quotes=quotes,
+    )
+
+
+def _sync_portfolio_from_broker(
+    *,
+    current_portfolio: Dict[str, Any],
+    broker: PaperBroker,
+    prices: Dict[str, float],
+) -> None:
+    current_portfolio["cashflow"] = broker.get_account().cash
+    existing_positions = dict(current_portfolio.get("positions", {}))
+    symbols = set(existing_positions) | set(broker.positions)
+    synced_positions: Dict[str, Dict[str, float]] = {}
+    for symbol in sorted(symbols):
+        shares = int(broker.positions.get(symbol, 0))
+        existing = existing_positions.get(symbol, {})
+        price = prices.get(symbol)
+        value = round(shares * float(price), 2) if price is not None else float(existing.get("value", 0.0) or 0.0)
+        synced_positions[symbol] = {
+            "shares": shares,
+            "value": value,
+        }
+    current_portfolio["positions"] = synced_positions
+
+
+def _execute_paper_fill(
+    *,
+    current_portfolio: Dict[str, Any],
+    ticker: str,
+    price: float,
+    order,
+    warn: WarningSink,
+) -> bool:
+    broker = _paper_broker_from_portfolio(
+        current_portfolio=current_portfolio,
+        prices={ticker: price},
+    )
+    paper_order = broker.submit_order(order)
+    if paper_order.status == BrokerOrderStatus.REJECTED:
+        warn(f"Paper broker rejected {ticker} {order.side.value.lower()}: {paper_order.rejection_reason}")
+        return False
+    fill_result = broker.fill_order(paper_order.order_id, quantity=order.shares, price=price)
+    if not fill_result.ok:
+        warn(f"Paper broker rejected {ticker} {order.side.value.lower()} fill: {fill_result.error}")
+        return False
+    _sync_portfolio_from_broker(
+        current_portfolio=current_portfolio,
+        broker=broker,
+        prices={ticker: price},
+    )
+    return True
+
+
 def execute_buy_order(
     *,
     current_portfolio: Dict[str, Any],
@@ -185,14 +258,14 @@ def execute_buy_order(
         warn(_direct_warning(ticker, "buy", validation.reasons))
         return False
 
-    cost = validation.order.shares * validation.order.limit_price
-    current_portfolio["cashflow"] -= cost
-    current_shares = current_portfolio["positions"].get(ticker, {}).get("shares", 0)
-    new_shares = current_shares + validation.order.shares
-    current_portfolio["positions"][ticker] = {
-        "shares": new_shares,
-        "value": round(new_shares * validation.order.limit_price, 2),
-    }
+    if not _execute_paper_fill(
+        current_portfolio=current_portfolio,
+        ticker=ticker,
+        price=validation.order.limit_price,
+        order=validation.order,
+        warn=warn,
+    ):
+        return False
     record_trade(date, ticker, "BUY", validation.order.shares, validation.order.limit_price)
     return True
 
@@ -221,16 +294,15 @@ def execute_sell_order(
     if validation.adjusted_shares != shares:
         warn(_direct_warning(ticker, "sell", validation.reasons))
 
-    current_pos = current_portfolio["positions"].get(ticker, {})
-    current_shares = current_pos.get("shares", 0)
     sell_shares = validation.order.shares
-    proceeds = sell_shares * validation.order.limit_price
-    current_portfolio["cashflow"] += proceeds
-    new_shares = current_shares - sell_shares
-    current_portfolio["positions"][ticker] = {
-        "shares": new_shares,
-        "value": round(new_shares * validation.order.limit_price, 2),
-    }
+    if not _execute_paper_fill(
+        current_portfolio=current_portfolio,
+        ticker=ticker,
+        price=validation.order.limit_price,
+        order=validation.order,
+        warn=warn,
+    ):
+        return False
     record_trade(date, ticker, "SELL", sell_shares, validation.order.limit_price)
     return True
 
@@ -279,11 +351,14 @@ def _apply_target_buy(
         return _risk_hold(_target_reason("Insufficient cash for target allocation", validation.reasons), validation.reasons)
 
     buy_shares = validation.order.shares
-    current_portfolio["cashflow"] -= buy_shares * validation.order.limit_price
-    current_portfolio["positions"][ticker] = {
-        "shares": current_shares + buy_shares,
-        "value": (current_shares + buy_shares) * validation.order.limit_price,
-    }
+    if not _execute_paper_fill(
+        current_portfolio=current_portfolio,
+        ticker=ticker,
+        price=validation.order.limit_price,
+        order=validation.order,
+        warn=lambda _message: None,
+    ):
+        return _risk_hold("Paper broker rejected target allocation", validation.reasons)
     record_trade(date, ticker, "BUY", buy_shares, validation.order.limit_price, justification)
     return {
         "action": "BUY",
@@ -319,12 +394,14 @@ def _apply_target_sell(
         return _risk_hold(_target_reason("No shares to sell", validation.reasons), validation.reasons)
 
     actual_sell = validation.order.shares
-    current_portfolio["cashflow"] += actual_sell * validation.order.limit_price
-    new_shares = current_shares - actual_sell
-    current_portfolio["positions"][ticker] = {
-        "shares": new_shares,
-        "value": new_shares * validation.order.limit_price,
-    }
+    if not _execute_paper_fill(
+        current_portfolio=current_portfolio,
+        ticker=ticker,
+        price=validation.order.limit_price,
+        order=validation.order,
+        warn=lambda _message: None,
+    ):
+        return _risk_hold("Paper broker rejected target allocation", validation.reasons)
     record_trade(date, ticker, "SELL", actual_sell, validation.order.limit_price, justification)
     return {
         "action": "SELL",

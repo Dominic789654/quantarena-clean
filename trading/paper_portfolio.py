@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -23,6 +24,8 @@ from .reconciliation import reconcile_account
 
 DEFAULT_PAPER_STATE_PATH = Path("data/paper_portfolio/state.json")
 STATE_SCHEMA_VERSION = 1
+ORDER_ID_RE = re.compile(r"^paper-(?P<sequence>\d+)$")
+FILL_ID_RE = re.compile(r"^fill-(?P<sequence>\d+)$")
 
 
 @dataclass(frozen=True)
@@ -212,6 +215,46 @@ class PaperPortfolioManager:
             error=None if report.ok else "reconciliation differences found",
         )
 
+    def smoke(self) -> PaperCommandResult:
+        """Run a deterministic local paper portfolio lifecycle check."""
+        steps: list[dict[str, Any]] = []
+        init = self.init(initial_cash=1000.0, overwrite=True)
+        steps.append(init.to_dict())
+        if not init.ok:
+            return _smoke_result(steps)
+
+        quote = self.set_quote(symbol="AAPL", price=100.0)
+        steps.append(quote.to_dict())
+        if not quote.ok:
+            return _smoke_result(steps)
+
+        submit = self.submit_order(symbol="AAPL", side="BUY", shares=3, limit_price=100.0)
+        steps.append(submit.to_dict())
+        if not submit.ok:
+            return _smoke_result(steps)
+
+        order_id = submit.result["order"]["order_id"] if submit.result else ""
+        fill = self.fill_order(order_id=order_id, quantity=3, price=100.0)
+        steps.append(fill.to_dict())
+        if not fill.ok:
+            return _smoke_result(steps)
+
+        account = self.account()
+        positions = self.positions()
+        orders = self.orders(symbol="AAPL")
+        quotes = self.quotes(symbols=["AAPL"])
+        reconcile = self.reconcile(expected_cash=700.0, expected_positions={"AAPL": 3})
+        steps.extend(
+            [
+                account.to_dict(),
+                positions.to_dict(),
+                orders.to_dict(),
+                quotes.to_dict(),
+                reconcile.to_dict(),
+            ]
+        )
+        return _smoke_result(steps)
+
     def _load_broker(self) -> PaperBroker:
         if not self.state_path.is_file():
             raise FileNotFoundError(f"paper portfolio state not found: {self.state_path}")
@@ -231,6 +274,8 @@ def broker_to_state(broker: PaperBroker) -> dict[str, Any]:
     return {
         "schema_version": STATE_SCHEMA_VERSION,
         "cash": broker.cash,
+        "next_order_sequence": broker.next_order_sequence,
+        "next_fill_sequence": broker.next_fill_sequence,
         "positions": dict(sorted(broker.positions.items())),
         "quotes": {
             symbol: _quote_payload(quote)
@@ -238,6 +283,17 @@ def broker_to_state(broker: PaperBroker) -> dict[str, Any]:
         },
         "orders": [_order_payload(order) for order in broker.get_orders()],
     }
+
+
+def _smoke_result(steps: list[dict[str, Any]]) -> PaperCommandResult:
+    ok = all(step.get("ok") is True for step in steps)
+    failing_step = next((step for step in steps if step.get("ok") is not True), None)
+    return PaperCommandResult(
+        ok=ok,
+        command="smoke",
+        result={"steps": steps},
+        error=None if ok else f"paper smoke failed at {failing_step.get('command') if failing_step else 'unknown'}",
+    )
 
 
 def broker_from_state(payload: Mapping[str, Any]) -> PaperBroker:
@@ -255,13 +311,16 @@ def broker_from_state(payload: Mapping[str, Any]) -> PaperBroker:
         for symbol, quote in (payload.get("quotes") or {}).items()
     }
     store = InMemoryOrderStore()
+    order_payloads = list(payload.get("orders") or [])
     broker = PaperBroker(
         initial_cash=float(payload.get("cash", 0.0)),
         positions={symbol: int(shares) for symbol, shares in (payload.get("positions") or {}).items()},
         quotes=quotes,
         order_store=store,
+        next_order_sequence=_next_order_sequence(payload, order_payloads),
+        next_fill_sequence=_next_fill_sequence(payload, order_payloads),
     )
-    for order_payload in payload.get("orders") or []:
+    for order_payload in order_payloads:
         store.create(_order_from_payload(order_payload))
     return broker
 
@@ -371,6 +430,41 @@ def _fill_payload(fill: Fill) -> dict[str, Any]:
         "timestamp": fill.timestamp,
         "metadata": dict(fill.metadata),
     }
+
+
+def _next_order_sequence(payload: Mapping[str, Any], orders: list[Mapping[str, Any]]) -> int:
+    derived = _next_sequence_from_ids(
+        (str(order.get("order_id", "")) for order in orders),
+        ORDER_ID_RE,
+    )
+    explicit = payload.get("next_order_sequence")
+    if explicit is not None:
+        return max(1, int(explicit), derived)
+    return derived
+
+
+def _next_fill_sequence(payload: Mapping[str, Any], orders: list[Mapping[str, Any]]) -> int:
+    derived = _next_sequence_from_ids(
+        (
+            str(fill.get("fill_id", ""))
+            for order in orders
+            for fill in (order.get("fills") or [])
+        ),
+        FILL_ID_RE,
+    )
+    explicit = payload.get("next_fill_sequence")
+    if explicit is not None:
+        return max(1, int(explicit), derived)
+    return derived
+
+
+def _next_sequence_from_ids(ids: Any, pattern: re.Pattern[str]) -> int:
+    highest = 0
+    for item in ids:
+        match = pattern.match(item)
+        if match:
+            highest = max(highest, int(match.group("sequence")))
+    return highest + 1
 
 
 def _resolve_state_path(state_path: str | Path | None) -> Path:
