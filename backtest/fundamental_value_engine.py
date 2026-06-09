@@ -169,88 +169,130 @@ class FundamentalValueBacktestEngine(BacktestEngine):
             "value_consistency_score": round(avg_score, 4),
         }
 
+    def _generate_value_filtered_decisions_from_signals(
+        self,
+        *,
+        date: str,
+        prices: Dict[str, float],
+        all_signals: Dict[str, Any],
+    ) -> Dict[str, Dict]:
+        filter_results: Dict[str, ValueFilterResult] = {}
+        for ticker in prices:
+            try:
+                fundamentals = self._get_fundamentals(ticker)
+                filter_results[ticker] = self._evaluate_value_filter(fundamentals)
+            except Exception as exc:
+                logger.warning(f"Fundamental value filter failed for {ticker}: {exc}")
+                filter_results[ticker] = ValueFilterResult(
+                    passed=False,
+                    ev_to_ebitda=None,
+                    roa=None,
+                    operating_cash_flow=None,
+                    current_ratio=None,
+                    lite_score=0,
+                    max_score=3,
+                    normalized_score=0.0,
+                    reasons=["fundamentals_fetch"],
+                )
+
+        self._record_value_filter_snapshot(date, filter_results)
+        passed_signals = {
+            ticker: signal
+            for ticker, signal in all_signals.items()
+            if filter_results.get(ticker) and filter_results[ticker].passed
+        }
+
+        from backtest.portfolio_allocator import Portfolio as AllocatorPortfolio
+
+        alloc_portfolio = AllocatorPortfolio(
+            cashflow=self.current_portfolio["cashflow"],
+            positions={
+                ticker: int(pos.get("shares", 0))
+                for ticker, pos in self.current_portfolio["positions"].items()
+            },
+        )
+
+        if passed_signals:
+            target_positions = allocate_with_mandate(
+                self.portfolio_allocator,
+                signals=passed_signals,
+                current_portfolio=alloc_portfolio,
+                prices=prices,
+                trading_date=date,
+                decision_memory=self.decision_memory[-5:] if self.decision_memory else None,
+            )
+        else:
+            target_positions = {}
+
+        for ticker in prices:
+            if ticker not in target_positions:
+                target_positions[ticker] = 0.0
+
+        decisions = self._convert_targets_to_trades(target_positions, prices, date)
+
+        for ticker, dec in decisions.items():
+            self.decision_memory.append(
+                {
+                    "trading_date": date,
+                    "ticker": ticker,
+                    "action": dec.get("action", "HOLD"),
+                    "shares": dec.get("shares", 0),
+                    "price": prices.get(ticker, 0),
+                }
+            )
+            dec["_applied"] = True
+
+        return decisions
+
     def _generate_llm_decisions(self, date: str, prices: Dict[str, float]) -> Dict[str, Dict]:
         if not (self.portfolio_mode and self.portfolio_allocator and self.workflow_adapter):
             return super()._generate_llm_decisions(date, prices)
 
-        decisions: Dict[str, Dict] = {}
         try:
             all_signals = self.workflow_adapter.collect_signals_only(trading_date=date, prices=prices)
             if not all_signals:
                 logger.warning("No signals collected in FundamentalValue engine; falling back to HOLD.")
                 return super()._generate_llm_decisions(date, prices)
 
-            filter_results: Dict[str, ValueFilterResult] = {}
-            for ticker in prices:
-                try:
-                    fundamentals = self._get_fundamentals(ticker)
-                    filter_results[ticker] = self._evaluate_value_filter(fundamentals)
-                except Exception as exc:
-                    logger.warning(f"Fundamental value filter failed for {ticker}: {exc}")
-                    filter_results[ticker] = ValueFilterResult(
-                        passed=False,
-                        ev_to_ebitda=None,
-                        roa=None,
-                        operating_cash_flow=None,
-                        current_ratio=None,
-                        lite_score=0,
-                        max_score=3,
-                        normalized_score=0.0,
-                        reasons=["fundamentals_fetch"],
-                    )
-
-            self._record_value_filter_snapshot(date, filter_results)
-            passed_signals = {
-                ticker: signal
-                for ticker, signal in all_signals.items()
-                if filter_results.get(ticker) and filter_results[ticker].passed
-            }
-
-            from backtest.portfolio_allocator import Portfolio as AllocatorPortfolio
-
-            alloc_portfolio = AllocatorPortfolio(
-                cashflow=self.current_portfolio["cashflow"],
-                positions={
-                    ticker: int(pos.get("shares", 0))
-                    for ticker, pos in self.current_portfolio["positions"].items()
-                },
+            return self._generate_value_filtered_decisions_from_signals(
+                date=date,
+                prices=prices,
+                all_signals=all_signals,
             )
-
-            if passed_signals:
-                target_positions = allocate_with_mandate(
-                    self.portfolio_allocator,
-                    signals=passed_signals,
-                    current_portfolio=alloc_portfolio,
-                    prices=prices,
-                    trading_date=date,
-                    decision_memory=self.decision_memory[-5:] if self.decision_memory else None,
-                )
-            else:
-                target_positions = {}
-
-            for ticker in prices:
-                if ticker not in target_positions:
-                    target_positions[ticker] = 0.0
-
-            decisions = self._convert_targets_to_trades(target_positions, prices, date)
-
-            for ticker, dec in decisions.items():
-                self.decision_memory.append(
-                    {
-                        "trading_date": date,
-                        "ticker": ticker,
-                        "action": dec.get("action", "HOLD"),
-                        "shares": dec.get("shares", 0),
-                        "price": prices.get(ticker, 0),
-                    }
-                )
-                dec["_applied"] = True
-
-            return decisions
 
         except Exception as exc:
             logger.error(f"Fundamental value decision path failed for {date}: {exc}")
             return super()._generate_llm_decisions(date, prices)
+
+    def _generate_llm_decisions_with_precollected_signals(
+        self,
+        date: str,
+        prices: Dict[str, float],
+        enhanced_signals: Dict[str, Any],
+        priority_order: Optional[List[str]] = None,
+    ) -> Dict[str, Dict]:
+        if not (self.portfolio_mode and self.portfolio_allocator and self.workflow_adapter):
+            return super()._generate_llm_decisions_with_precollected_signals(
+                date,
+                prices,
+                enhanced_signals,
+                priority_order=priority_order,
+            )
+
+        try:
+            return self._generate_value_filtered_decisions_from_signals(
+                date=date,
+                prices=prices,
+                all_signals=enhanced_signals,
+            )
+        except Exception as exc:
+            logger.error(f"Fundamental value shared-signal decision path failed for {date}: {exc}")
+            return super()._generate_llm_decisions_with_precollected_signals(
+                date,
+                prices,
+                enhanced_signals,
+                priority_order=priority_order,
+            )
 
     def finalize_run(
         self,

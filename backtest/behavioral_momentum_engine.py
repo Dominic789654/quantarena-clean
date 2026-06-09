@@ -122,69 +122,112 @@ class BehavioralMomentumBacktestEngine(BacktestEngine):
             if not all_signals:
                 return super()._generate_llm_decisions(date, prices)
 
-            from backtest.portfolio_allocator import Portfolio as AllocatorPortfolio
-
-            alloc_portfolio = AllocatorPortfolio(
-                cashflow=self.current_portfolio["cashflow"],
-                positions={
-                    ticker: int(pos.get("shares", 0))
-                    for ticker, pos in self.current_portfolio["positions"].items()
-                },
-            )
-
-            base_targets = allocate_with_mandate(
-                self.portfolio_allocator,
-                signals=all_signals,
-                current_portfolio=alloc_portfolio,
+            return self._generate_momentum_decisions_from_signals(
+                date=date,
                 prices=prices,
-                trading_date=date,
-                decision_memory=self.decision_memory[-5:] if self.decision_memory else None,
+                all_signals=all_signals,
             )
-
-            crash_multiplier = self._market_crash_breaker_multiplier(date)
-            self._exposure_multipliers.append(crash_multiplier)
-            self._momentum_days += 1
-
-            adjusted_targets: Dict[str, float] = {}
-            for ticker in prices:
-                base_weight = float(base_targets.get(ticker, 0.0) or 0.0)
-                signal_bundle = all_signals.get(ticker, {})
-                summary = signal_bundle.get("summary", {})
-                bullish_count = float(summary.get("bullish_count", 0) or 0)
-                bearish_count = float(summary.get("bearish_count", 0) or 0)
-                if bullish_count + bearish_count > 0:
-                    sentiment_bias = bullish_count / (bullish_count + bearish_count)
-                else:
-                    sentiment_bias = 0.5
-
-                vol_scaling = self._compute_vol_scaling(ticker, date)
-                if abs(vol_scaling - 1.0) > 1e-9:
-                    self._vol_scaling_events += 1
-
-                adjusted = base_weight * vol_scaling * crash_multiplier * sentiment_bias
-                adjusted_targets[ticker] = max(adjusted, 0.0)
-
-            total = sum(adjusted_targets.values())
-            if total > 1.0 and total > 0:
-                adjusted_targets = {ticker: weight / total for ticker, weight in adjusted_targets.items()}
-
-            decisions = self._convert_targets_to_trades(adjusted_targets, prices, date)
-            for ticker, dec in decisions.items():
-                self.decision_memory.append(
-                    {
-                        "trading_date": date,
-                        "ticker": ticker,
-                        "action": dec.get("action", "HOLD"),
-                        "shares": dec.get("shares", 0),
-                        "price": prices.get(ticker, 0),
-                    }
-                )
-                dec["_applied"] = True
-            return decisions
 
         except Exception as exc:
             logger.error(f"Behavioral momentum decision path failed for {date}: {exc}")
             return super()._generate_llm_decisions(date, prices)
+
+    def _generate_llm_decisions_with_precollected_signals(
+        self,
+        date: str,
+        prices: Dict[str, float],
+        enhanced_signals: Dict[str, Any],
+        priority_order: Optional[List[str]] = None,
+    ) -> Dict[str, Dict]:
+        if not (self.portfolio_mode and self.portfolio_allocator and self.workflow_adapter):
+            return super()._generate_llm_decisions_with_precollected_signals(
+                date,
+                prices,
+                enhanced_signals,
+                priority_order=priority_order,
+            )
+
+        try:
+            return self._generate_momentum_decisions_from_signals(
+                date=date,
+                prices=prices,
+                all_signals=enhanced_signals,
+            )
+        except Exception as exc:
+            logger.error(f"Behavioral momentum shared-signal decision path failed for {date}: {exc}")
+            return super()._generate_llm_decisions_with_precollected_signals(
+                date,
+                prices,
+                enhanced_signals,
+                priority_order=priority_order,
+            )
+
+    def _generate_momentum_decisions_from_signals(
+        self,
+        *,
+        date: str,
+        prices: Dict[str, float],
+        all_signals: Dict[str, Any],
+    ) -> Dict[str, Dict]:
+        from backtest.portfolio_allocator import Portfolio as AllocatorPortfolio
+
+        alloc_portfolio = AllocatorPortfolio(
+            cashflow=self.current_portfolio["cashflow"],
+            positions={
+                ticker: int(pos.get("shares", 0))
+                for ticker, pos in self.current_portfolio["positions"].items()
+            },
+        )
+
+        base_targets = allocate_with_mandate(
+            self.portfolio_allocator,
+            signals=all_signals,
+            current_portfolio=alloc_portfolio,
+            prices=prices,
+            trading_date=date,
+            decision_memory=self.decision_memory[-5:] if self.decision_memory else None,
+        )
+
+        crash_multiplier = self._market_crash_breaker_multiplier(date)
+        self._exposure_multipliers.append(crash_multiplier)
+        self._momentum_days += 1
+
+        adjusted_targets: Dict[str, float] = {}
+        for ticker in prices:
+            base_weight = float(base_targets.get(ticker, 0.0) or 0.0)
+            signal_bundle = all_signals.get(ticker, {})
+            summary = signal_bundle.get("summary", {})
+            bullish_count = float(summary.get("bullish_count", 0) or 0)
+            bearish_count = float(summary.get("bearish_count", 0) or 0)
+            if bullish_count + bearish_count > 0:
+                sentiment_bias = bullish_count / (bullish_count + bearish_count)
+            else:
+                sentiment_bias = 0.5
+
+            vol_scaling = self._compute_vol_scaling(ticker, date)
+            if abs(vol_scaling - 1.0) > 1e-9:
+                self._vol_scaling_events += 1
+
+            adjusted = base_weight * vol_scaling * crash_multiplier * sentiment_bias
+            adjusted_targets[ticker] = max(adjusted, 0.0)
+
+        total = sum(adjusted_targets.values())
+        if total > 1.0 and total > 0:
+            adjusted_targets = {ticker: weight / total for ticker, weight in adjusted_targets.items()}
+
+        decisions = self._convert_targets_to_trades(adjusted_targets, prices, date)
+        for ticker, dec in decisions.items():
+            self.decision_memory.append(
+                {
+                    "trading_date": date,
+                    "ticker": ticker,
+                    "action": dec.get("action", "HOLD"),
+                    "shares": dec.get("shares", 0),
+                    "price": prices.get(ticker, 0),
+                }
+            )
+            dec["_applied"] = True
+        return decisions
 
     def _momentum_behavior_metrics(self) -> Dict[str, float]:
         days = max(self._momentum_days, 1)

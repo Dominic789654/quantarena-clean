@@ -447,6 +447,7 @@ def execute_buy_order(
     record_trade: OrderTradeRecorder,
     warn: WarningSink,
     audit_events: AuditEvents | None = None,
+    justification: str = "",
 ) -> bool:
     """Apply a plain BUY order to portfolio state after risk validation."""
     validation = _validate_backtest_order(
@@ -455,6 +456,7 @@ def execute_buy_order(
         action="BUY",
         shares=shares,
         price=price,
+        justification=justification,
     )
     if validation.rejected or validation.order is None or validation.adjusted_shares != shares:
         warn(_direct_warning(ticker, "buy", validation.reasons))
@@ -466,7 +468,7 @@ def execute_buy_order(
             side="BUY",
             requested_shares=shares,
             requested_price=price,
-            source_justification="",
+            source_justification=justification,
             validation=validation,
         )
         return False
@@ -495,6 +497,7 @@ def execute_sell_order(
     record_trade: OrderTradeRecorder,
     warn: WarningSink,
     audit_events: AuditEvents | None = None,
+    justification: str = "",
 ) -> bool:
     """Apply a plain SELL order to portfolio state after risk validation."""
     validation = _validate_backtest_order(
@@ -503,6 +506,7 @@ def execute_sell_order(
         action="SELL",
         shares=shares,
         price=price,
+        justification=justification,
     )
     if validation.rejected or validation.order is None:
         warn(_direct_warning(ticker, "sell", validation.reasons))
@@ -514,7 +518,7 @@ def execute_sell_order(
             side="SELL",
             requested_shares=shares,
             requested_price=price,
-            source_justification="",
+            source_justification=justification,
             validation=validation,
         )
         return False

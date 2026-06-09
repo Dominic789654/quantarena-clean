@@ -560,15 +560,16 @@ class BacktestEngine(BaseBacktestEngine):
             action = decision.get('action', 'HOLD')
             shares = decision.get('shares', 0)
             price = prices[ticker]
+            justification = decision.get('justification', '')
             already_applied = decision.get('_applied', False)
 
             if already_applied:
                 continue
 
             if action == 'BUY' and shares > 0:
-                self._execute_buy(date, ticker, shares, price)
+                self._execute_buy(date, ticker, shares, price, justification)
             elif action == 'SELL' and shares > 0:
-                self._execute_sell(date, ticker, shares, price)
+                self._execute_sell(date, ticker, shares, price, justification)
 
         self._record_snapshot(date, prices)
 
@@ -737,9 +738,8 @@ class BacktestEngine(BaseBacktestEngine):
                     "shares": decision.shares,
                     "price": decision.price,
                     "justification": decision.justification,
-                    "_applied": True,
+                    "_applied": False,
                 }
-                self._apply_decision_to_portfolio(date, ticker, decision, prices.get(ticker, 0))
 
             logger.info(
                 f"Shared smart-priority decisions for {date}: "
@@ -800,11 +800,8 @@ class BacktestEngine(BaseBacktestEngine):
                         "shares": decision.shares,
                         "price": decision.price,
                         "justification": decision.justification,
-                        "_applied": True  # Mark as already applied
+                        "_applied": False,
                     }
-
-                    # Update current portfolio based on decision
-                    self._apply_decision_to_portfolio(date, ticker, decision, prices.get(ticker, 0))
 
                 logger.info(f"Smart priority decisions for {date}: {[(t, d['action'], d['shares']) for t, d in decisions.items()]}")
                 return decisions
@@ -884,11 +881,8 @@ class BacktestEngine(BaseBacktestEngine):
                     "shares": decision.shares,
                     "price": decision.price,
                     "justification": decision.justification,
-                    "_applied": True  # Mark as already applied
+                    "_applied": False,
                 }
-
-                # Update current portfolio based on decision
-                self._apply_decision_to_portfolio(date, ticker, decision, prices.get(ticker, 0))
 
             logger.info(f"LLM decisions for {date}: {[(t, d['action'], d['shares']) for t, d in decisions.items()]}")
 
@@ -1038,7 +1032,7 @@ class BacktestEngine(BaseBacktestEngine):
 
         return decisions
 
-    def _execute_buy(self, date: str, ticker: str, shares: int, price: float):
+    def _execute_buy(self, date: str, ticker: str, shares: int, price: float, justification: str = ""):
         """Execute a buy order."""
         execute_buy_order(
             current_portfolio=self.current_portfolio,
@@ -1049,9 +1043,10 @@ class BacktestEngine(BaseBacktestEngine):
             record_trade=self._record_order_trade,
             warn=logger.warning,
             audit_events=self.broker_audit_events,
+            justification=justification,
         )
 
-    def _execute_sell(self, date: str, ticker: str, shares: int, price: float):
+    def _execute_sell(self, date: str, ticker: str, shares: int, price: float, justification: str = ""):
         """Execute a sell order."""
         execute_sell_order(
             current_portfolio=self.current_portfolio,
@@ -1062,6 +1057,7 @@ class BacktestEngine(BaseBacktestEngine):
             record_trade=self._record_order_trade,
             warn=logger.warning,
             audit_events=self.broker_audit_events,
+            justification=justification,
         )
 
     def _record_order_trade(
