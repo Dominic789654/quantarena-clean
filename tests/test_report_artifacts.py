@@ -21,6 +21,8 @@ def test_load_run_report_artifacts_reads_complete_fixture():
     assert artifacts.market == "us"
     assert artifacts.trading_days == 3
     assert artifacts.trade_count == 2
+    assert artifacts.broker_audit == []
+    assert artifacts.broker_audit_count == 0
     assert artifacts.metrics["total_return"] == 1.5
     assert artifacts.equity_curve[1]["total_value"] == "100800.0"
     assert artifacts.trades[0]["ticker"] == "AAPL"
@@ -30,6 +32,7 @@ def test_load_run_report_artifacts_reads_complete_fixture():
     assert summary["run_id"] == "fixture_run"
     assert summary["trading_days"] == 3
     assert summary["trade_count"] == 2
+    assert summary["broker_audit_count"] == 0
     assert summary["metric_keys"] == [
         "avg_cash_ratio",
         "max_drawdown",
@@ -50,6 +53,33 @@ def test_load_run_report_artifacts_reports_missing_required_file():
     assert artifacts.errors[0].path.name == "trades.csv"
     assert artifacts.errors[0].message == "missing required artifact"
     assert artifacts.summary()["errors"][0]["message"] == "missing required artifact"
+
+
+def test_load_run_report_artifacts_reads_optional_broker_audit_jsonl(tmp_path: Path):
+    (tmp_path / "metrics.json").write_text(
+        json.dumps({"run_id": "audit-fixture", "market": "us", "metrics": {"total_return": 1.0}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "equity_curve.csv").write_text("date,total_value\n2026-01-02,1000\n", encoding="utf-8")
+    (tmp_path / "trades.csv").write_text("date,ticker,action\n2026-01-02,AAA,BUY\n", encoding="utf-8")
+    (tmp_path / "broker_audit.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"order_id": "paper-000001", "outcome": "filled"}),
+                json.dumps({"order_id": None, "outcome": "rejected", "rejection_source": "risk_gate"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    artifacts = load_run_report_artifacts(tmp_path)
+
+    assert artifacts.ok is True
+    assert artifacts.broker_audit_count == 2
+    assert artifacts.broker_audit[0]["order_id"] == "paper-000001"
+    assert artifacts.broker_audit[1]["rejection_source"] == "risk_gate"
+    assert artifacts.summary()["broker_audit_count"] == 2
 
 
 def test_load_run_report_artifacts_reports_invalid_metrics_json(tmp_path: Path):

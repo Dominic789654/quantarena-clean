@@ -71,6 +71,7 @@ class BacktestResult:
     benchmark_curve: Optional[pd.Series] = None
     benchmark_source: str = "unavailable"
     errors: List[str] = field(default_factory=list)
+    broker_audit_events: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class BacktestEngine(BaseBacktestEngine):
@@ -218,6 +219,7 @@ class BacktestEngine(BaseBacktestEngine):
             "cashflow": initial_cash,
             "positions": {ticker: {"shares": 0, "value": 0} for ticker in tickers}
         }
+        self.broker_audit_events: List[Dict[str, Any]] = []
 
     def run(
         self,
@@ -330,6 +332,7 @@ class BacktestEngine(BaseBacktestEngine):
             benchmark_curve=benchmark_curve,
             benchmark_source=benchmark_source,
             errors=errors,
+            broker_audit_events=list(self.broker_audit_events),
         )
 
         if generate_report:
@@ -926,6 +929,7 @@ class BacktestEngine(BaseBacktestEngine):
             prices=prices,
             date=date,
             record_trade=self._record_target_trade,
+            audit_events=self.broker_audit_events,
         )
 
     def _record_target_trade(
@@ -1044,6 +1048,7 @@ class BacktestEngine(BaseBacktestEngine):
             price=price,
             record_trade=self._record_order_trade,
             warn=logger.warning,
+            audit_events=self.broker_audit_events,
         )
 
     def _execute_sell(self, date: str, ticker: str, shares: int, price: float):
@@ -1056,6 +1061,7 @@ class BacktestEngine(BaseBacktestEngine):
             price=price,
             record_trade=self._record_order_trade,
             warn=logger.warning,
+            audit_events=self.broker_audit_events,
         )
 
     def _record_order_trade(

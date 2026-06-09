@@ -35,6 +35,45 @@ def test_execute_buy_order_updates_portfolio_and_records_trade():
     assert warnings == []
 
 
+def test_execute_buy_order_records_filled_audit_event():
+    portfolio = {
+        "cashflow": 1000.0,
+        "positions": {"AAA": {"shares": 2, "value": 20.0}},
+    }
+    audit_events = []
+
+    applied = execute_buy_order(
+        current_portfolio=portfolio,
+        date="2026-01-02",
+        ticker="AAA",
+        shares=3,
+        price=10.0,
+        record_trade=lambda *args: None,
+        warn=lambda _message: None,
+        audit_events=audit_events,
+    )
+
+    assert applied is True
+    assert len(audit_events) == 1
+    event = audit_events[0]
+    assert event["date"] == "2026-01-02"
+    assert event["symbol"] == "AAA"
+    assert event["side"] == "BUY"
+    assert event["requested_shares"] == 3
+    assert event["approved_shares"] == 3
+    assert event["requested_price"] == 10.0
+    assert event["limit_price"] == 10.0
+    assert event["order_id"] == "paper-000001"
+    assert event["fill_id"] == "fill-000001"
+    assert event["outcome"] == "filled"
+    assert event["rejection_source"] is None
+    assert event["risk_reasons"] == []
+    assert event["cash_before"] == 1000.0
+    assert event["cash_after"] == 970.0
+    assert event["positions_before"] == {"AAA": {"shares": 2, "value": 20.0}}
+    assert event["positions_after"] == {"AAA": {"shares": 5, "value": 50.0}}
+
+
 def test_execute_buy_order_routes_through_paper_broker(monkeypatch):
     portfolio = {
         "cashflow": 1000.0,
@@ -63,6 +102,38 @@ def test_execute_buy_order_routes_through_paper_broker(monkeypatch):
     assert submitted == [("AAA", "BUY", 3, 10.0)]
 
 
+def test_execution_audit_uses_monotonic_order_and_fill_ids():
+    portfolio = {
+        "cashflow": 1000.0,
+        "positions": {"AAA": {"shares": 0, "value": 0.0}},
+    }
+    audit_events = []
+
+    assert execute_buy_order(
+        current_portfolio=portfolio,
+        date="2026-01-02",
+        ticker="AAA",
+        shares=3,
+        price=10.0,
+        record_trade=lambda *args: None,
+        warn=lambda _message: None,
+        audit_events=audit_events,
+    )
+    assert execute_sell_order(
+        current_portfolio=portfolio,
+        date="2026-01-03",
+        ticker="AAA",
+        shares=1,
+        price=11.0,
+        record_trade=lambda *args: None,
+        warn=lambda _message: None,
+        audit_events=audit_events,
+    )
+
+    assert [event["order_id"] for event in audit_events] == ["paper-000001", "paper-000002"]
+    assert [event["fill_id"] for event in audit_events] == ["fill-000001", "fill-000002"]
+
+
 def test_execute_buy_order_rejects_insufficient_cash():
     portfolio = {
         "cashflow": 5.0,
@@ -86,6 +157,42 @@ def test_execute_buy_order_rejects_insufficient_cash():
     assert portfolio["positions"]["AAA"] == {"shares": 2, "value": 20.0}
     assert recorded == []
     assert warnings == ["Insufficient cash for AAA buy"]
+
+
+def test_execute_buy_order_records_risk_gate_rejection_audit_event():
+    portfolio = {
+        "cashflow": 5.0,
+        "positions": {"AAA": {"shares": 2, "value": 20.0}},
+    }
+    recorded = []
+    audit_events = []
+
+    applied = execute_buy_order(
+        current_portfolio=portfolio,
+        date="2026-01-02",
+        ticker="AAA",
+        shares=1,
+        price=10.0,
+        record_trade=lambda *args: recorded.append(args),
+        warn=lambda _message: None,
+        audit_events=audit_events,
+    )
+
+    assert applied is False
+    assert recorded == []
+    assert portfolio["cashflow"] == 5.0
+    assert portfolio["positions"]["AAA"] == {"shares": 2, "value": 20.0}
+    assert len(audit_events) == 1
+    event = audit_events[0]
+    assert event["outcome"] == "rejected"
+    assert event["rejection_source"] == "risk_gate"
+    assert event["risk_reasons"] == ["cash_limit"]
+    assert event["order_id"] is None
+    assert event["fill_id"] is None
+    assert event["approved_shares"] == 0
+    assert event["risk_adjusted_shares"] == 0
+    assert event["cash_before"] == event["cash_after"] == 5.0
+    assert event["positions_before"] == event["positions_after"]
 
 
 def test_execute_sell_order_updates_portfolio_and_records_trade():

@@ -947,5 +947,8 @@ def test_convert_targets_to_trades_records_tracker_trades_when_preapplied():
         assert engine.tracker.trades[0].ticker == "AAA"
         assert engine.tracker.trades[0].shares == decisions["AAA"]["shares"]
         assert engine.current_portfolio["positions"]["AAA"]["shares"] == decisions["AAA"]["shares"]
+        assert len(engine.broker_audit_events) == 1
+        assert engine.broker_audit_events[0]["order_id"] == "paper-000001"
+        assert engine.broker_audit_events[0]["outcome"] == "filled"
     finally:
         engine.close()

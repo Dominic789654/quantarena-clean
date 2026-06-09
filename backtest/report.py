@@ -1059,6 +1059,29 @@ class ReportGenerator:
 
         return json_str
 
+    def generate_broker_audit_jsonl(
+        self,
+        result,  # BacktestResult
+        output_path: Optional[str] = None,
+    ) -> str:
+        """Generate a JSONL paper broker audit trail."""
+        events = getattr(result, "broker_audit_events", []) or []
+        lines = [
+            json.dumps(self._json_safe(event), allow_nan=False, default=str)
+            for event in events
+        ]
+        jsonl_str = "\n".join(lines)
+        if lines:
+            jsonl_str += "\n"
+
+        if output_path:
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(jsonl_str)
+            logger.info(f"Broker audit JSONL saved to {output_path}")
+
+        return jsonl_str
+
     def generate_fof_allocations_json(
         self,
         result,  # BacktestResult
@@ -1338,6 +1361,7 @@ class ReportGenerator:
             "trades_csv": str(run_dir / "trades.csv"),
             "metrics_json": str(run_dir / "metrics.json"),
             "equity_curve_csv": str(run_dir / "equity_curve.csv"),
+            "broker_audit_jsonl": str(run_dir / "broker_audit.jsonl"),
         }
 
         fof_allocations = (getattr(result, "config", {}) or {}).get("fof", {}).get("daily_allocations", [])
@@ -1351,6 +1375,7 @@ class ReportGenerator:
         self.generate_trades_csv(result, paths["trades_csv"])
         self.generate_metrics_json(result, paths["metrics_json"])
         self.generate_equity_curve_csv(result, paths["equity_curve_csv"])
+        self.generate_broker_audit_jsonl(result, paths["broker_audit_jsonl"])
         if "fof_allocations_json" in paths:
             self.generate_fof_allocations_json(result, paths["fof_allocations_json"])
             self.generate_fof_allocations_csv(result, paths["fof_allocations_csv"])

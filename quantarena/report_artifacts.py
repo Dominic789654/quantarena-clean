@@ -31,6 +31,7 @@ class RunReportArtifacts:
     metrics: dict[str, Any]
     equity_curve: list[dict[str, str]]
     trades: list[dict[str, str]]
+    broker_audit: list[dict[str, Any]] = field(default_factory=list)
     errors: list[ReportArtifactLoadError] = field(default_factory=list)
 
     @property
@@ -55,6 +56,10 @@ class RunReportArtifacts:
     def trade_count(self) -> int:
         return len(self.trades)
 
+    @property
+    def broker_audit_count(self) -> int:
+        return len(self.broker_audit)
+
     def summary(self) -> dict[str, Any]:
         """Return a compact summary suitable for downstream report tooling."""
         return {
@@ -64,6 +69,7 @@ class RunReportArtifacts:
             "market": self.market,
             "trading_days": self.trading_days,
             "trade_count": self.trade_count,
+            "broker_audit_count": self.broker_audit_count,
             "metric_keys": sorted(self.metrics),
             "errors": [
                 {"path": str(error.path), "message": error.message}
@@ -89,12 +95,14 @@ def load_run_report_artifacts(root: str | Path) -> RunReportArtifacts:
 
     equity_curve = _load_csv_rows(report_root / "equity_curve.csv", errors)
     trades = _load_csv_rows(report_root / "trades.csv", errors)
+    broker_audit = _load_optional_jsonl_rows(report_root / "broker_audit.jsonl", errors)
     return RunReportArtifacts(
         root=report_root,
         metrics_payload=metrics_payload,
         metrics=metrics,
         equity_curve=equity_curve,
         trades=trades,
+        broker_audit=broker_audit,
         errors=errors,
     )
 
@@ -143,3 +151,42 @@ def _load_csv_rows(
     except (csv.Error, OSError, UnicodeDecodeError) as exc:
         errors.append(ReportArtifactLoadError(path=path, message=f"unable to read CSV: {exc}"))
         return []
+
+
+def _load_optional_jsonl_rows(
+    path: Path,
+    errors: list[ReportArtifactLoadError],
+) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+
+    rows: list[dict[str, Any]] = []
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    errors.append(
+                        ReportArtifactLoadError(
+                            path=path,
+                            message=f"invalid JSONL on line {line_number}: {exc}",
+                        )
+                    )
+                    continue
+                if not isinstance(payload, dict):
+                    errors.append(
+                        ReportArtifactLoadError(
+                            path=path,
+                            message=f"JSONL line {line_number} must be an object",
+                        )
+                    )
+                    continue
+                rows.append(payload)
+    except (OSError, UnicodeDecodeError) as exc:
+        errors.append(ReportArtifactLoadError(path=path, message=f"unable to read JSONL: {exc}"))
+        return []
+    return rows

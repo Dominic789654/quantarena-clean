@@ -21,8 +21,11 @@ TradeRecorder = Callable[[str, str, str, int, float, str], None]
 OrderTradeRecorder = Callable[[str, str, str, int, float], None]
 SnapshotRecorder = Callable[[str, float, Dict[str, Any], Dict[str, float]], None]
 WarningSink = Callable[[str], None]
+AuditEvents = list[dict[str, Any]]
 
 _BACKTEST_RISK_ENGINE = PreTradeRiskEngine(RiskLimits(require_market_open=False))
+_PAPER_ORDER_SEQUENCE_KEY = "_paper_order_sequence"
+_PAPER_FILL_SEQUENCE_KEY = "_paper_fill_sequence"
 
 
 def convert_targets_to_trades(
@@ -32,6 +35,7 @@ def convert_targets_to_trades(
     prices: Dict[str, float],
     date: str,
     record_trade: TradeRecorder,
+    audit_events: AuditEvents | None = None,
 ) -> Dict[str, Dict]:
     """Convert target position weights into applied trade decisions.
 
@@ -62,6 +66,7 @@ def convert_targets_to_trades(
                 shares_diff=shares_diff,
                 date=date,
                 record_trade=record_trade,
+                audit_events=audit_events,
             )
         elif shares_diff < 0:
             decisions[ticker] = _apply_target_sell(
@@ -73,6 +78,7 @@ def convert_targets_to_trades(
                 shares_diff=shares_diff,
                 date=date,
                 record_trade=record_trade,
+                audit_events=audit_events,
             )
         else:
             decisions[ticker] = {
@@ -115,6 +121,113 @@ def _decision(action: str, shares: int, price: float, justification: str = "") -
 
 def _risk_reason_values(reasons: tuple[RiskReason, ...]) -> list[str]:
     return [reason.value for reason in reasons]
+
+
+def _cash_snapshot(current_portfolio: Dict[str, Any]) -> float:
+    return float(current_portfolio.get("cashflow", 0.0) or 0.0)
+
+
+def _positions_audit_snapshot(current_portfolio: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
+    positions: Dict[str, Dict[str, float]] = {}
+    for symbol, position in sorted((current_portfolio.get("positions") or {}).items()):
+        positions[str(symbol).upper()] = {
+            "shares": int(position.get("shares", 0) or 0),
+            "value": float(position.get("value", 0.0) or 0.0),
+        }
+    return positions
+
+
+def _append_audit_event(
+    audit_events: AuditEvents | None,
+    *,
+    date: str,
+    ticker: str,
+    side: str,
+    requested_shares: int,
+    approved_shares: int,
+    requested_price: float,
+    limit_price: float | None,
+    order_id: str | None,
+    fill_id: str | None,
+    outcome: str,
+    rejection_source: str | None,
+    rejection_reason: str | None,
+    risk_reasons: tuple[RiskReason, ...] | list[str],
+    source_justification: str,
+    cash_before: float,
+    cash_after: float,
+    positions_before: Dict[str, Dict[str, float]],
+    positions_after: Dict[str, Dict[str, float]],
+    risk_adjusted_shares: int | None = None,
+) -> None:
+    if audit_events is None:
+        return
+
+    normalized_risk_reasons = [
+        reason.value if isinstance(reason, RiskReason) else str(reason)
+        for reason in risk_reasons
+    ]
+    event: dict[str, Any] = {
+        "date": date,
+        "symbol": ticker.upper(),
+        "side": side.upper(),
+        "requested_shares": int(requested_shares),
+        "approved_shares": int(approved_shares),
+        "requested_price": float(requested_price),
+        "limit_price": float(limit_price) if limit_price is not None else None,
+        "order_id": order_id,
+        "fill_id": fill_id,
+        "outcome": outcome,
+        "rejection_source": rejection_source,
+        "rejection_reason": rejection_reason,
+        "risk_reasons": normalized_risk_reasons,
+        "source_justification": source_justification or "",
+        "cash_before": float(cash_before),
+        "cash_after": float(cash_after),
+        "positions_before": positions_before,
+        "positions_after": positions_after,
+    }
+    if risk_adjusted_shares is not None:
+        event["risk_adjusted_shares"] = int(risk_adjusted_shares)
+    audit_events.append(event)
+
+
+def _append_risk_rejection_audit_event(
+    audit_events: AuditEvents | None,
+    *,
+    current_portfolio: Dict[str, Any],
+    date: str,
+    ticker: str,
+    side: str,
+    requested_shares: int,
+    requested_price: float,
+    source_justification: str,
+    validation,
+) -> None:
+    cash = _cash_snapshot(current_portfolio)
+    positions = _positions_audit_snapshot(current_portfolio)
+    _append_audit_event(
+        audit_events,
+        date=date,
+        ticker=ticker,
+        side=side,
+        requested_shares=getattr(validation, "requested_shares", requested_shares),
+        approved_shares=0,
+        requested_price=requested_price,
+        limit_price=requested_price,
+        order_id=None,
+        fill_id=None,
+        outcome="rejected",
+        rejection_source="risk_gate",
+        rejection_reason=None,
+        risk_reasons=validation.reasons,
+        source_justification=source_justification,
+        cash_before=cash,
+        cash_after=cash,
+        positions_before=positions,
+        positions_after=positions,
+        risk_adjusted_shares=getattr(validation, "adjusted_shares", 0),
+    )
 
 
 def _risk_hold(reason: str, validation_reasons: tuple[RiskReason, ...]) -> Dict:
@@ -183,7 +296,25 @@ def _paper_broker_from_portfolio(
         initial_cash=float(current_portfolio.get("cashflow", 0.0) or 0.0),
         positions=positions,
         quotes=quotes,
+        next_order_sequence=_next_broker_sequence(current_portfolio, _PAPER_ORDER_SEQUENCE_KEY),
+        next_fill_sequence=_next_broker_sequence(current_portfolio, _PAPER_FILL_SEQUENCE_KEY),
     )
+
+
+def _next_broker_sequence(current_portfolio: Dict[str, Any], key: str) -> int:
+    try:
+        return max(1, int(current_portfolio.get(key, 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _sync_broker_sequences_to_portfolio(
+    *,
+    current_portfolio: Dict[str, Any],
+    broker: PaperBroker,
+) -> None:
+    current_portfolio[_PAPER_ORDER_SEQUENCE_KEY] = broker.next_order_sequence
+    current_portfolio[_PAPER_FILL_SEQUENCE_KEY] = broker.next_fill_sequence
 
 
 def _sync_portfolio_from_broker(
@@ -192,6 +323,7 @@ def _sync_portfolio_from_broker(
     broker: PaperBroker,
     prices: Dict[str, float],
 ) -> None:
+    _sync_broker_sequences_to_portfolio(current_portfolio=current_portfolio, broker=broker)
     current_portfolio["cashflow"] = broker.get_account().cash
     existing_positions = dict(current_portfolio.get("positions", {}))
     symbols = set(existing_positions) | set(broker.positions)
@@ -211,27 +343,96 @@ def _sync_portfolio_from_broker(
 def _execute_paper_fill(
     *,
     current_portfolio: Dict[str, Any],
+    date: str,
     ticker: str,
     price: float,
     order,
     warn: WarningSink,
+    audit_events: AuditEvents | None = None,
 ) -> bool:
+    cash_before = _cash_snapshot(current_portfolio)
+    positions_before = _positions_audit_snapshot(current_portfolio)
     broker = _paper_broker_from_portfolio(
         current_portfolio=current_portfolio,
         prices={ticker: price},
     )
     paper_order = broker.submit_order(order)
     if paper_order.status == BrokerOrderStatus.REJECTED:
+        _sync_broker_sequences_to_portfolio(current_portfolio=current_portfolio, broker=broker)
         warn(f"Paper broker rejected {ticker} {order.side.value.lower()}: {paper_order.rejection_reason}")
+        _append_audit_event(
+            audit_events,
+            date=date,
+            ticker=ticker,
+            side=order.side.value,
+            requested_shares=int(order.metadata.get("requested_shares", order.shares)),
+            approved_shares=order.shares,
+            requested_price=float(order.metadata.get("latest_price", price)),
+            limit_price=order.limit_price,
+            order_id=paper_order.order_id,
+            fill_id=None,
+            outcome="rejected",
+            rejection_source="paper_broker",
+            rejection_reason=paper_order.rejection_reason,
+            risk_reasons=order.adjustments,
+            source_justification=order.source_justification,
+            cash_before=cash_before,
+            cash_after=_cash_snapshot(current_portfolio),
+            positions_before=positions_before,
+            positions_after=_positions_audit_snapshot(current_portfolio),
+        )
         return False
     fill_result = broker.fill_order(paper_order.order_id, quantity=order.shares, price=price)
     if not fill_result.ok:
+        _sync_broker_sequences_to_portfolio(current_portfolio=current_portfolio, broker=broker)
         warn(f"Paper broker rejected {ticker} {order.side.value.lower()} fill: {fill_result.error}")
+        _append_audit_event(
+            audit_events,
+            date=date,
+            ticker=ticker,
+            side=order.side.value,
+            requested_shares=int(order.metadata.get("requested_shares", order.shares)),
+            approved_shares=order.shares,
+            requested_price=float(order.metadata.get("latest_price", price)),
+            limit_price=order.limit_price,
+            order_id=paper_order.order_id,
+            fill_id=None,
+            outcome="rejected",
+            rejection_source="paper_broker",
+            rejection_reason=fill_result.error,
+            risk_reasons=order.adjustments,
+            source_justification=order.source_justification,
+            cash_before=cash_before,
+            cash_after=_cash_snapshot(current_portfolio),
+            positions_before=positions_before,
+            positions_after=_positions_audit_snapshot(current_portfolio),
+        )
         return False
     _sync_portfolio_from_broker(
         current_portfolio=current_portfolio,
         broker=broker,
         prices={ticker: price},
+    )
+    _append_audit_event(
+        audit_events,
+        date=date,
+        ticker=ticker,
+        side=order.side.value,
+        requested_shares=int(order.metadata.get("requested_shares", order.shares)),
+        approved_shares=order.shares,
+        requested_price=float(order.metadata.get("latest_price", price)),
+        limit_price=order.limit_price,
+        order_id=paper_order.order_id,
+        fill_id=fill_result.fill.fill_id if fill_result.fill else None,
+        outcome="filled",
+        rejection_source=None,
+        rejection_reason=None,
+        risk_reasons=order.adjustments,
+        source_justification=order.source_justification,
+        cash_before=cash_before,
+        cash_after=_cash_snapshot(current_portfolio),
+        positions_before=positions_before,
+        positions_after=_positions_audit_snapshot(current_portfolio),
     )
     return True
 
@@ -245,6 +446,7 @@ def execute_buy_order(
     price: float,
     record_trade: OrderTradeRecorder,
     warn: WarningSink,
+    audit_events: AuditEvents | None = None,
 ) -> bool:
     """Apply a plain BUY order to portfolio state after risk validation."""
     validation = _validate_backtest_order(
@@ -256,14 +458,27 @@ def execute_buy_order(
     )
     if validation.rejected or validation.order is None or validation.adjusted_shares != shares:
         warn(_direct_warning(ticker, "buy", validation.reasons))
+        _append_risk_rejection_audit_event(
+            audit_events,
+            current_portfolio=current_portfolio,
+            date=date,
+            ticker=ticker,
+            side="BUY",
+            requested_shares=shares,
+            requested_price=price,
+            source_justification="",
+            validation=validation,
+        )
         return False
 
     if not _execute_paper_fill(
         current_portfolio=current_portfolio,
+        date=date,
         ticker=ticker,
         price=validation.order.limit_price,
         order=validation.order,
         warn=warn,
+        audit_events=audit_events,
     ):
         return False
     record_trade(date, ticker, "BUY", validation.order.shares, validation.order.limit_price)
@@ -279,6 +494,7 @@ def execute_sell_order(
     price: float,
     record_trade: OrderTradeRecorder,
     warn: WarningSink,
+    audit_events: AuditEvents | None = None,
 ) -> bool:
     """Apply a plain SELL order to portfolio state after risk validation."""
     validation = _validate_backtest_order(
@@ -290,6 +506,17 @@ def execute_sell_order(
     )
     if validation.rejected or validation.order is None:
         warn(_direct_warning(ticker, "sell", validation.reasons))
+        _append_risk_rejection_audit_event(
+            audit_events,
+            current_portfolio=current_portfolio,
+            date=date,
+            ticker=ticker,
+            side="SELL",
+            requested_shares=shares,
+            requested_price=price,
+            source_justification="",
+            validation=validation,
+        )
         return False
     if validation.adjusted_shares != shares:
         warn(_direct_warning(ticker, "sell", validation.reasons))
@@ -297,10 +524,12 @@ def execute_sell_order(
     sell_shares = validation.order.shares
     if not _execute_paper_fill(
         current_portfolio=current_portfolio,
+        date=date,
         ticker=ticker,
         price=validation.order.limit_price,
         order=validation.order,
         warn=warn,
+        audit_events=audit_events,
     ):
         return False
     record_trade(date, ticker, "SELL", sell_shares, validation.order.limit_price)
@@ -337,6 +566,7 @@ def _apply_target_buy(
     shares_diff: int,
     date: str,
     record_trade: TradeRecorder,
+    audit_events: AuditEvents | None = None,
 ) -> Dict:
     justification = f"Target allocation: {target_ratio:.1%} (current: {current_shares} shares)"
     validation = _validate_backtest_order(
@@ -348,15 +578,28 @@ def _apply_target_buy(
         justification=justification,
     )
     if validation.rejected or validation.order is None:
+        _append_risk_rejection_audit_event(
+            audit_events,
+            current_portfolio=current_portfolio,
+            date=date,
+            ticker=ticker,
+            side="BUY",
+            requested_shares=shares_diff,
+            requested_price=current_price,
+            source_justification=justification,
+            validation=validation,
+        )
         return _risk_hold(_target_reason("Insufficient cash for target allocation", validation.reasons), validation.reasons)
 
     buy_shares = validation.order.shares
     if not _execute_paper_fill(
         current_portfolio=current_portfolio,
+        date=date,
         ticker=ticker,
         price=validation.order.limit_price,
         order=validation.order,
         warn=lambda _message: None,
+        audit_events=audit_events,
     ):
         return _risk_hold("Paper broker rejected target allocation", validation.reasons)
     record_trade(date, ticker, "BUY", buy_shares, validation.order.limit_price, justification)
@@ -379,6 +622,7 @@ def _apply_target_sell(
     shares_diff: int,
     date: str,
     record_trade: TradeRecorder,
+    audit_events: AuditEvents | None = None,
 ) -> Dict:
     sell_shares = abs(shares_diff)
     justification = f"Target allocation: {target_ratio:.1%} (current: {current_shares} shares)"
@@ -391,15 +635,28 @@ def _apply_target_sell(
         justification=justification,
     )
     if validation.rejected or validation.order is None:
+        _append_risk_rejection_audit_event(
+            audit_events,
+            current_portfolio=current_portfolio,
+            date=date,
+            ticker=ticker,
+            side="SELL",
+            requested_shares=sell_shares,
+            requested_price=current_price,
+            source_justification=justification,
+            validation=validation,
+        )
         return _risk_hold(_target_reason("No shares to sell", validation.reasons), validation.reasons)
 
     actual_sell = validation.order.shares
     if not _execute_paper_fill(
         current_portfolio=current_portfolio,
+        date=date,
         ticker=ticker,
         price=validation.order.limit_price,
         order=validation.order,
         warn=lambda _message: None,
+        audit_events=audit_events,
     ):
         return _risk_hold("Paper broker rejected target allocation", validation.reasons)
     record_trade(date, ticker, "SELL", actual_sell, validation.order.limit_price, justification)
