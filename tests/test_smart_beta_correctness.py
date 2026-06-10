@@ -795,6 +795,21 @@ def test_fetch_us_index_daily_includes_requested_end_date():
     assert list(result.index.strftime("%Y-%m-%d")) == ["2024-01-02"]
 
 
+def test_us_index_constituents_use_fallback_without_tushare():
+    class Provider(IndexConstituentsProvider):
+        @property
+        def tushare_api(self):
+            raise AssertionError("US index constituents should not construct Tushare")
+
+    provider = Provider()
+
+    constituents = provider.get_constituents("^GSPC", datetime(2024, 1, 2))
+
+    assert constituents
+    assert {item.ticker for item in constituents} >= {"AAPL", "MSFT", "NVDA"}
+    assert abs(sum(item.weight for item in constituents) - 1.0) < 1e-9
+
+
 
 def test_fallback_constituent_weights_are_normalized():
     provider = IndexConstituentsProvider()

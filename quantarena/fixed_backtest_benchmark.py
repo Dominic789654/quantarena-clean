@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+import os
 import re
 import subprocess
 import sys
@@ -11,13 +13,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+from quantarena.backtest_artifact_review import review_multi_personality_artifacts
 from quantarena.backtest_visualizer import write_backtest_visualizer
 from quantarena.report_artifacts import load_run_report_artifacts
 from shared.utils.path_manager import get_project_root
 from shared.utils.run_id import generate_run_id
 
 
-BENCHMARK_MODES = ("simple", "llm", "both")
+BENCHMARK_MODES = ("simple", "llm", "multi", "both")
+EXECUTABLE_MODES = ("simple", "llm", "multi")
 MODE_ORDER = ("simple", "llm")
 DEFAULT_MARKET = "us"
 DEFAULT_TICKERS = ("AAPL", "MSFT", "NVDA")
@@ -25,9 +29,19 @@ DEFAULT_START_DATE = "2026-06-01"
 DEFAULT_END_DATE = "2026-06-05"
 DEFAULT_CASHFLOW = 10000.0
 DEFAULT_LLM_ANALYSTS = ("technical",)
+DEFAULT_MULTI_ANALYSTS = ("fundamental", "technical", "company_news")
+DEFAULT_MULTI_PERSONALITIES = (
+    "macro_tactical",
+    "fundamental_value",
+    "behavioral_momentum",
+    "smart_beta_passive",
+    "equal_weight_index",
+)
+DEFAULT_MULTI_MAX_WORKERS = 5
 DEFAULT_OUTPUT_ROOT = Path("reports/backtest/fixed_benchmarks")
 
 REPORT_PATH_RE = re.compile(r"Reports saved to:\s*(?P<path>\S+)")
+MULTI_REPORT_PATH_RE = re.compile(r"Detailed reports saved to:\s*(?P<path>\S+)")
 RUN_ID_RE = re.compile(r"Run ID:\s*(?P<run_id>[A-Za-z0-9_.-]+)")
 
 
@@ -45,6 +59,11 @@ class FixedBenchmarkConfig:
     end_date: str = DEFAULT_END_DATE
     cashflow: float = DEFAULT_CASHFLOW
     llm_analysts: tuple[str, ...] = DEFAULT_LLM_ANALYSTS
+    multi_analysts: tuple[str, ...] = DEFAULT_MULTI_ANALYSTS
+    multi_personalities: tuple[str, ...] = DEFAULT_MULTI_PERSONALITIES
+    multi_max_workers: int = DEFAULT_MULTI_MAX_WORKERS
+    news_replay_path: Path | None = None
+    benchmark_cache_dir: Path | None = None
     output_root: Path = DEFAULT_OUTPUT_ROOT
     run_id: str | None = None
     python_executable: str = sys.executable
@@ -57,6 +76,11 @@ class FixedBenchmarkConfig:
             "end_date": self.end_date,
             "cashflow": self.cashflow,
             "llm_analysts": list(self.llm_analysts),
+            "multi_analysts": list(self.multi_analysts),
+            "multi_personalities": list(self.multi_personalities),
+            "multi_max_workers": self.multi_max_workers,
+            "news_replay_path": str(self.news_replay_path) if self.news_replay_path else None,
+            "benchmark_cache_dir": str(self.benchmark_cache_dir) if self.benchmark_cache_dir else None,
             "output_root": str(self.output_root),
             "run_id": self.run_id,
             "python_executable": self.python_executable,
@@ -76,6 +100,10 @@ class FixedBenchmarkRun:
     dashboard_path: Path | None = None
     benchmark_source: str | None = None
     benchmark_diagnostics_path: Path | None = None
+    benchmark_diagnostics_paths: list[Path] = field(default_factory=list)
+    news_diagnostics_path: Path | None = None
+    news_diagnostics_paths: list[Path] = field(default_factory=list)
+    artifact_review: dict[str, Any] = field(default_factory=dict)
     metrics: dict[str, Any] = field(default_factory=dict)
     stdout: str = ""
     stderr: str = ""
@@ -92,6 +120,10 @@ class FixedBenchmarkRun:
             "dashboard_path": str(self.dashboard_path) if self.dashboard_path else None,
             "benchmark_source": self.benchmark_source,
             "benchmark_diagnostics_path": str(self.benchmark_diagnostics_path) if self.benchmark_diagnostics_path else None,
+            "benchmark_diagnostics_paths": [str(path) for path in self.benchmark_diagnostics_paths],
+            "news_diagnostics_path": str(self.news_diagnostics_path) if self.news_diagnostics_path else None,
+            "news_diagnostics_paths": [str(path) for path in self.news_diagnostics_paths],
+            "artifact_review": self.artifact_review,
             "metrics": self.metrics,
             "stdout": self.stdout,
             "stderr": self.stderr,
@@ -147,6 +179,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the summary payload as JSON",
     )
     parser.add_argument(
+        "--news-replay-fixture",
+        type=Path,
+        help="Optional JSON/JSONL company-news replay fixture passed to child backtests",
+    )
+    parser.add_argument(
+        "--benchmark-cache-dir",
+        type=Path,
+        help="Optional benchmark close-price cache directory passed to child backtests",
+    )
+    parser.add_argument(
+        "--multi-analysts",
+        default=",".join(DEFAULT_MULTI_ANALYSTS),
+        help="Comma-separated analysts for fixed multi-personality mode",
+    )
+    parser.add_argument(
+        "--multi-personalities",
+        default=",".join(DEFAULT_MULTI_PERSONALITIES),
+        help="Comma-separated personalities for fixed multi-personality mode",
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=DEFAULT_MULTI_MAX_WORKERS,
+        help="Maximum workers for fixed multi-personality mode",
+    )
+    parser.add_argument(
         "--python",
         dest="python_executable",
         default=sys.executable,
@@ -163,6 +221,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_root=args.output_root,
         run_id=args.run_id,
         python_executable=args.python_executable,
+        multi_analysts=_parse_csv_tuple(args.multi_analysts),
+        multi_personalities=_parse_csv_tuple(args.multi_personalities),
+        multi_max_workers=args.max_workers,
+        news_replay_path=args.news_replay_fixture,
+        benchmark_cache_dir=args.benchmark_cache_dir,
     )
     result = run_fixed_backtest_benchmark(mode=args.mode, config=config)
     payload = result.to_dict()
@@ -213,6 +276,11 @@ def run_fixed_backtest_benchmark(
             end_date=effective_config.end_date,
             cashflow=effective_config.cashflow,
             llm_analysts=effective_config.llm_analysts,
+            multi_analysts=effective_config.multi_analysts,
+            multi_personalities=effective_config.multi_personalities,
+            multi_max_workers=effective_config.multi_max_workers,
+            news_replay_path=effective_config.news_replay_path,
+            benchmark_cache_dir=effective_config.benchmark_cache_dir,
             output_root=effective_config.output_root,
             run_id=benchmark_run_id,
             python_executable=effective_config.python_executable,
@@ -230,7 +298,7 @@ def build_backtest_command(
     project_root: Path | None = None,
 ) -> list[str]:
     """Build the `run.py` command for one fixed benchmark mode."""
-    if mode not in MODE_ORDER:
+    if mode not in EXECUTABLE_MODES:
         raise ValueError(f"Unsupported executable benchmark mode: {mode}")
 
     effective_config = config or FixedBenchmarkConfig()
@@ -240,7 +308,7 @@ def build_backtest_command(
         str(root / "run.py"),
         "--no-banner",
         "--mode",
-        "backtest",
+        "multi-personality" if mode == "multi" else "backtest",
         "--market",
         effective_config.market,
         "--tickers",
@@ -254,6 +322,17 @@ def build_backtest_command(
     ]
     if mode == "llm":
         command.extend(["--use-llm", "--analysts", ",".join(effective_config.llm_analysts)])
+    if mode == "multi":
+        command.extend(
+            [
+                "--analysts",
+                ",".join(effective_config.multi_analysts),
+                "--personalities",
+                ",".join(effective_config.multi_personalities),
+                "--max-workers",
+                str(effective_config.multi_max_workers),
+            ]
+        )
     return command
 
 
@@ -271,10 +350,11 @@ def _run_mode(
         cwd=str(project_root),
         text=True,
         capture_output=True,
+        env=_build_child_env(config),
     )
     stdout = completed.stdout or ""
     stderr = completed.stderr or ""
-    report_dir = _discover_report_dir(stdout=stdout, stderr=stderr, project_root=project_root)
+    report_dir = _discover_report_dir(stdout=stdout, stderr=stderr, project_root=project_root, mode=mode)
     run_id = _discover_run_id(stdout=stdout, stderr=stderr, report_dir=report_dir)
 
     if completed.returncode != 0:
@@ -302,6 +382,29 @@ def _run_mode(
             error="could not discover report directory from backtest output",
         )
 
+    if mode == "multi":
+        review = review_multi_personality_artifacts(report_dir)
+        review_payload = review.to_dict()
+        benchmark_diagnostics_paths = _collect_multi_diagnostics_paths(review_payload, "benchmark_diagnostics.jsonl")
+        news_diagnostics_path = report_dir / "news_diagnostics.jsonl"
+        return FixedBenchmarkRun(
+            mode=mode,
+            ok=review.ok,
+            command=command,
+            exit_code=completed.returncode,
+            run_id=run_id,
+            report_dir=report_dir,
+            benchmark_diagnostics_path=benchmark_diagnostics_paths[0] if benchmark_diagnostics_paths else None,
+            benchmark_diagnostics_paths=benchmark_diagnostics_paths,
+            news_diagnostics_path=news_diagnostics_path if news_diagnostics_path.exists() else None,
+            news_diagnostics_paths=[news_diagnostics_path] if news_diagnostics_path.exists() else [],
+            artifact_review=review_payload,
+            metrics=_load_multi_personality_metrics(report_dir),
+            stdout=stdout,
+            stderr=stderr,
+            error=None if review.ok else _review_error_text(review_payload),
+        )
+
     dashboard_path = report_dir / "dashboard.html"
     dashboard_result = visualizer_writer(
         root=report_dir,
@@ -316,6 +419,9 @@ def _run_mode(
 
     artifacts = load_run_report_artifacts(report_dir)
     benchmark_diagnostics_path = report_dir / "benchmark_diagnostics.jsonl"
+    news_diagnostics_path = report_dir / "news_diagnostics.jsonl"
+    benchmark_diagnostics_paths = [benchmark_diagnostics_path] if benchmark_diagnostics_path.exists() else []
+    news_diagnostics_paths = [news_diagnostics_path] if news_diagnostics_path.exists() else []
     return FixedBenchmarkRun(
         mode=mode,
         ok=dashboard_ok and artifacts.ok,
@@ -326,6 +432,9 @@ def _run_mode(
         dashboard_path=dashboard_path if dashboard_ok else None,
         benchmark_source=_benchmark_source_from_metrics(artifacts.metrics),
         benchmark_diagnostics_path=benchmark_diagnostics_path if benchmark_diagnostics_path.exists() else None,
+        benchmark_diagnostics_paths=benchmark_diagnostics_paths,
+        news_diagnostics_path=news_diagnostics_path if news_diagnostics_path.exists() else None,
+        news_diagnostics_paths=news_diagnostics_paths,
         metrics=dict(artifacts.metrics),
         stdout=stdout,
         stderr=stderr,
@@ -336,24 +445,29 @@ def _run_mode(
 def _expand_modes(mode: str) -> tuple[str, ...]:
     if mode == "both":
         return MODE_ORDER
-    if mode in MODE_ORDER:
+    if mode in EXECUTABLE_MODES:
         return (mode,)
     raise ValueError(f"Unsupported benchmark mode: {mode}")
 
 
-def _discover_report_dir(*, stdout: str, stderr: str, project_root: Path) -> Path | None:
+def _discover_report_dir(*, stdout: str, stderr: str, project_root: Path, mode: str) -> Path | None:
     combined = "\n".join([stdout, stderr])
-    matches = list(REPORT_PATH_RE.finditer(combined))
-    if matches:
-        raw_path = matches[-1].group("path").rstrip("/")
-        path = Path(raw_path)
-        return path if path.is_absolute() else project_root / path
+    for pattern in (REPORT_PATH_RE, MULTI_REPORT_PATH_RE):
+        matches = list(pattern.finditer(combined))
+        if matches:
+            raw_path = matches[-1].group("path").rstrip("/")
+            path = Path(raw_path)
+            return path if path.is_absolute() else project_root / path
 
     run_id = _discover_run_id(stdout=stdout, stderr=stderr, report_dir=None)
     if run_id:
-        fallback = project_root / "reports" / "backtest" / run_id
-        if fallback.exists():
-            return fallback
+        candidate_roots = (
+            ("multi_personality", "backtest") if mode == "multi" else ("backtest", "multi_personality")
+        )
+        for report_root in candidate_roots:
+            fallback = project_root / "reports" / report_root / run_id
+            if fallback.exists():
+                return fallback
     return None
 
 
@@ -381,9 +495,67 @@ def _last_error_text(*, stdout: str, stderr: str) -> str | None:
     return lines[-1] if lines else None
 
 
+def _review_error_text(review_payload: Mapping[str, Any]) -> str | None:
+    findings = review_payload.get("findings")
+    if not isinstance(findings, list) or not findings:
+        return None
+    messages = []
+    for finding in findings:
+        if isinstance(finding, Mapping):
+            severity = finding.get("severity", "")
+            message = finding.get("message", "")
+            messages.append(f"{severity}: {message}")
+    return "; ".join(messages) if messages else None
+
+
 def _benchmark_source_from_metrics(metrics: Mapping[str, Any]) -> str | None:
     source = metrics.get("benchmark_source") if isinstance(metrics, Mapping) else None
     return str(source) if source else None
+
+
+def _build_child_env(config: FixedBenchmarkConfig) -> dict[str, str]:
+    env = os.environ.copy()
+    if config.news_replay_path:
+        env["COMPANY_NEWS_PROVIDER"] = "replay"
+        env["COMPANY_NEWS_REPLAY_PATH"] = str(config.news_replay_path)
+    if config.benchmark_cache_dir:
+        env["BENCHMARK_CACHE_DIR"] = str(config.benchmark_cache_dir)
+    return env
+
+
+def _load_multi_personality_metrics(report_dir: Path) -> dict[str, Any]:
+    summary_path = report_dir / "personality_summary.csv"
+    if not summary_path.is_file():
+        return {}
+    try:
+        with summary_path.open(newline="", encoding="utf-8") as handle:
+            return {"personality_summary": list(csv.DictReader(handle))}
+    except (csv.Error, OSError, UnicodeDecodeError):
+        return {}
+
+
+def _collect_multi_diagnostics_paths(review_payload: Mapping[str, Any], artifact_name: str) -> list[Path]:
+    runs = review_payload.get("runs")
+    if not isinstance(runs, Mapping):
+        return []
+
+    paths: list[Path] = []
+    for run in runs.values():
+        if not isinstance(run, Mapping):
+            continue
+        raw_report_dir = run.get("report_dir")
+        if not raw_report_dir:
+            continue
+        path = Path(str(raw_report_dir)) / artifact_name
+        if path.exists():
+            paths.append(path)
+    return sorted(paths)
+
+
+def _parse_csv_tuple(raw_value: str | None) -> tuple[str, ...]:
+    if not raw_value:
+        return ()
+    return tuple(item.strip() for item in raw_value.split(",") if item.strip())
 
 
 def _format_float_arg(value: float) -> str:

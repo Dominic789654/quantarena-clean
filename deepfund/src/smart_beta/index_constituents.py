@@ -139,6 +139,11 @@ class IndexConstituentsProvider:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
+        if index_code.startswith("^"):
+            constituents = self._fetch_constituents_fallback(index_code, trade_date)
+            self._cache[cache_key] = constituents
+            return constituents
+
         try:
             # Get constituents from Tushare
             constituents = self._fetch_constituents_from_tushare(

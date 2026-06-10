@@ -46,13 +46,74 @@ def test_build_backtest_command_adds_llm_technical_analyst(tmp_path: Path):
     assert command[-3:] == ["--use-llm", "--analysts", "technical"]
 
 
+def test_build_backtest_command_adds_multi_personality_arguments(tmp_path: Path):
+    config = FixedBenchmarkConfig(output_root=tmp_path, python_executable="python")
+
+    command = build_backtest_command("multi", config, project_root=tmp_path)
+
+    assert command[:5] == [
+        "python",
+        str(tmp_path / "run.py"),
+        "--no-banner",
+        "--mode",
+        "multi-personality",
+    ]
+    assert command[-6:] == [
+        "--analysts",
+        "fundamental,technical,company_news",
+        "--personalities",
+        "macro_tactical,fundamental_value,behavioral_momentum,smart_beta_passive,equal_weight_index",
+        "--max-workers",
+        "5",
+    ]
+
+
+def test_run_fixed_benchmark_passes_data_source_env(tmp_path: Path):
+    reports_root = tmp_path / "reports" / "backtest"
+    captured_env = {}
+    news_fixture = tmp_path / "news.jsonl"
+    benchmark_cache = tmp_path / "benchmark_cache"
+    news_fixture.write_text(
+        '{"ticker":"AAPL","title":"fixture","publish_time":"2026-06-01"}\n',
+        encoding="utf-8",
+    )
+
+    def fake_executor(command, cwd, text, capture_output, env):
+        del command, cwd, text, capture_output
+        captured_env.update(env)
+        _write_report(reports_root / "simple_run", run_id="simple_run")
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=f"Run ID: simple_run\nReports saved to: {reports_root / 'simple_run'}/\n",
+            stderr="",
+        )
+
+    result = run_fixed_backtest_benchmark(
+        mode="simple",
+        config=FixedBenchmarkConfig(
+            output_root=tmp_path / "benchmarks",
+            run_id="summary",
+            news_replay_path=news_fixture,
+            benchmark_cache_dir=benchmark_cache,
+        ),
+        executor=fake_executor,
+        visualizer_writer=_fake_visualizer_writer,
+    )
+
+    assert result.ok is True
+    assert captured_env["COMPANY_NEWS_PROVIDER"] == "replay"
+    assert captured_env["COMPANY_NEWS_REPLAY_PATH"] == str(news_fixture)
+    assert captured_env["BENCHMARK_CACHE_DIR"] == str(benchmark_cache)
+
+
 def test_run_fixed_benchmark_both_writes_summary_and_dashboards(tmp_path: Path):
     reports_root = tmp_path / "reports" / "backtest"
     calls: list[list[str]] = []
     visualized: list[tuple[Path, Path, str]] = []
 
-    def fake_executor(command, cwd, text, capture_output):
-        del cwd, text, capture_output
+    def fake_executor(command, cwd, text, capture_output, env):
+        del cwd, text, capture_output, env
         calls.append(list(command))
         mode = "llm" if "--use-llm" in command else "simple"
         run_id = f"{mode}_run"
@@ -70,11 +131,6 @@ def test_run_fixed_benchmark_both_writes_summary_and_dashboards(tmp_path: Path):
             stderr="",
         )
 
-    def fake_visualizer_writer(root, output, title):
-        visualized.append((Path(root), Path(output), title))
-        Path(output).write_text("<html>dashboard</html>", encoding="utf-8")
-        return SimpleNamespace(ok=True, errors=())
-
     config = FixedBenchmarkConfig(
         output_root=tmp_path / "benchmarks",
         run_id="fixed_summary",
@@ -85,7 +141,12 @@ def test_run_fixed_benchmark_both_writes_summary_and_dashboards(tmp_path: Path):
         mode="both",
         config=config,
         executor=fake_executor,
-        visualizer_writer=fake_visualizer_writer,
+        visualizer_writer=lambda root, output, title: _fake_visualizer_writer(
+            root,
+            output,
+            title,
+            visualized=visualized,
+        ),
     )
 
     payload = json.loads(result.summary_path.read_text(encoding="utf-8"))
@@ -107,11 +168,47 @@ def test_run_fixed_benchmark_both_writes_summary_and_dashboards(tmp_path: Path):
     assert payload["runs"][1]["benchmark_diagnostics_path"] is None
 
 
+def test_run_fixed_benchmark_multi_reviews_artifacts(tmp_path: Path):
+    reports_root = tmp_path / "reports"
+    multi_report = reports_root / "multi_personality" / "multi_run"
+
+    def fake_executor(command, cwd, text, capture_output, env):
+        del cwd, text, capture_output, env
+        assert "--mode" in command
+        assert "multi-personality" in command
+        _write_multi_report(multi_report, reports_root / "backtest")
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout=f"Run ID: multi_run\nDetailed reports saved to: {multi_report}/\n",
+            stderr="",
+        )
+
+    result = run_fixed_backtest_benchmark(
+        mode="multi",
+        config=FixedBenchmarkConfig(output_root=tmp_path / "benchmarks", run_id="summary"),
+        executor=fake_executor,
+    )
+
+    payload = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert result.ok is True
+    assert payload["runs"][0]["mode"] == "multi"
+    assert payload["runs"][0]["report_dir"] == str(multi_report)
+    assert payload["runs"][0]["news_diagnostics_path"].endswith("news_diagnostics.jsonl")
+    assert payload["runs"][0]["news_diagnostics_paths"] == [str(multi_report / "news_diagnostics.jsonl")]
+    assert payload["runs"][0]["benchmark_diagnostics_path"].endswith("benchmark_diagnostics.jsonl")
+    assert payload["runs"][0]["benchmark_diagnostics_paths"] == [
+        str(reports_root / "backtest" / "mp_smart_beta" / "benchmark_diagnostics.jsonl")
+    ]
+    assert payload["runs"][0]["artifact_review"]["ok"] is True
+    assert payload["runs"][0]["metrics"]["personality_summary"][0]["Personality"] == "smart_beta_passive"
+
+
 def test_run_fixed_benchmark_keeps_success_when_later_mode_fails(tmp_path: Path):
     reports_root = tmp_path / "reports" / "backtest"
 
-    def fake_executor(command, cwd, text, capture_output):
-        del cwd, text, capture_output
+    def fake_executor(command, cwd, text, capture_output, env):
+        del cwd, text, capture_output, env
         if "--use-llm" in command:
             return subprocess.CompletedProcess(
                 args=command,
@@ -127,16 +224,11 @@ def test_run_fixed_benchmark_keeps_success_when_later_mode_fails(tmp_path: Path)
             stderr="",
         )
 
-    def fake_visualizer_writer(root, output, title):
-        del root, title
-        Path(output).write_text("<html>dashboard</html>", encoding="utf-8")
-        return SimpleNamespace(ok=True, errors=())
-
     result = run_fixed_backtest_benchmark(
         mode="both",
         config=FixedBenchmarkConfig(output_root=tmp_path / "benchmarks", run_id="summary"),
         executor=fake_executor,
-        visualizer_writer=fake_visualizer_writer,
+        visualizer_writer=_fake_visualizer_writer,
     )
 
     payload = json.loads(result.summary_path.read_text(encoding="utf-8"))
@@ -150,8 +242,8 @@ def test_run_fixed_benchmark_keeps_success_when_later_mode_fails(tmp_path: Path)
 
 
 def test_run_fixed_benchmark_reports_missing_report_directory(tmp_path: Path):
-    def fake_executor(command, cwd, text, capture_output):
-        del cwd, text, capture_output
+    def fake_executor(command, cwd, text, capture_output, env):
+        del cwd, text, capture_output, env
         return subprocess.CompletedProcess(args=command, returncode=0, stdout="Run ID: lost\n", stderr="")
 
     result = run_fixed_backtest_benchmark(
@@ -164,6 +256,13 @@ def test_run_fixed_benchmark_reports_missing_report_directory(tmp_path: Path):
     assert result.runs[0].run_id == "lost"
     assert result.runs[0].report_dir is None
     assert "could not discover report directory" in (result.runs[0].error or "")
+
+
+def _fake_visualizer_writer(root, output, title, visualized=None):
+    if visualized is not None:
+        visualized.append((Path(root), Path(output), title))
+    Path(output).write_text("<html>dashboard</html>", encoding="utf-8")
+    return SimpleNamespace(ok=True, errors=())
 
 
 def _write_report(
@@ -203,6 +302,10 @@ def _write_report(
         "date,ticker,action,shares,price,value\n2026-06-01,AAPL,BUY,1,300,300\n",
         encoding="utf-8",
     )
+    (root / "broker_audit.jsonl").write_text(
+        json.dumps({"event": "fill", "ticker": "AAPL"}) + "\n",
+        encoding="utf-8",
+    )
     if benchmark_diagnostics:
         (root / "benchmark_diagnostics.jsonl").write_text(
             json.dumps(
@@ -215,3 +318,57 @@ def _write_report(
             + "\n",
             encoding="utf-8",
         )
+
+
+def _write_multi_report(root: Path, backtest_root: Path) -> None:
+    root.mkdir(parents=True)
+    personality = "smart_beta_passive"
+    run_id = "mp_smart_beta"
+    _write_report(backtest_root / run_id, run_id=run_id, benchmark_diagnostics=True)
+    (root / "comparison_data.json").write_text(
+        json.dumps(
+            {
+                "run_id": "multi_run",
+                "artifact_schema_version": 2,
+                "personality_results": [
+                    {
+                        "personality": personality,
+                        "run_id": run_id,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "daily_decisions.jsonl").write_text(
+        json.dumps(
+            {
+                "date": "2026-06-01",
+                "personality": personality,
+                "ticker": "AAPL",
+                "action": "HOLD",
+                "applied": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "news_diagnostics.jsonl").write_text(
+        json.dumps(
+            {
+                "provider": "replay_news",
+                "ticker": "AAPL",
+                "trading_date": "2026-06-01",
+                "raw_count": 1,
+                "date_filtered_count": 1,
+                "final_count": 1,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "personality_summary.csv").write_text(
+        "Personality,Total Return %,Max Drawdown %,Sharpe Ratio,Trade Count\n"
+        "smart_beta_passive,0.00,0.00,0.00,0\n",
+        encoding="utf-8",
+    )
