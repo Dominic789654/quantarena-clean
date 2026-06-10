@@ -143,7 +143,13 @@ ENV_REQUIREMENTS: List[EnvVarRequirement] = [
     EnvVarRequirement(
         name="COMPANY_NEWS_PROVIDER",
         level=ValidationLevel.OPTIONAL,
-        description="DeepFund company news provider (default, tavily, tavily_strict, akshare, akshare_strict, auto)",
+        description="DeepFund company news provider (default, replay, replay_strict, tavily, tavily_strict, akshare, akshare_strict, auto)",
+        used_in=["deepfund", "backtest"],
+    ),
+    EnvVarRequirement(
+        name="COMPANY_NEWS_REPLAY_PATH",
+        level=ValidationLevel.OPTIONAL,
+        description="JSON/JSONL replay fixture path for COMPANY_NEWS_PROVIDER=replay/replay_strict",
         used_in=["deepfund", "backtest"],
     ),
     
@@ -265,16 +271,21 @@ class EnvValidator:
         # Validate company news provider configuration for trading modes.
         if mode in ["deepfund", "backtest"]:
             news_provider = os.getenv("COMPANY_NEWS_PROVIDER", "default").strip().lower()
-            if news_provider not in {"default", "tavily", "tavily_strict", "akshare", "akshare_strict", "auto"}:
+            if news_provider not in {"default", "replay", "replay_strict", "tavily", "tavily_strict", "akshare", "akshare_strict", "auto"}:
                 self.warnings.append(
                     "  • COMPANY_NEWS_PROVIDER: Invalid value. "
-                    "Use one of [default, tavily, tavily_strict, akshare, akshare_strict, auto]."
+                    "Use one of [default, replay, replay_strict, tavily, tavily_strict, akshare, akshare_strict, auto]."
                 )
             if news_provider in {"tavily", "tavily_strict"} and not os.getenv("TAVILY_API_KEY", "").strip():
                 self.errors.append(
                     "  • TAVILY_API_KEY: COMPANY_NEWS_PROVIDER=tavily/tavily_strict requires TAVILY_API_KEY."
                 )
                 self.missing[ValidationLevel.ERROR].append("TAVILY_API_KEY")
+            if news_provider in {"replay", "replay_strict"} and not os.getenv("COMPANY_NEWS_REPLAY_PATH", "").strip():
+                self.errors.append(
+                    "  • COMPANY_NEWS_REPLAY_PATH: COMPANY_NEWS_PROVIDER=replay/replay_strict requires COMPANY_NEWS_REPLAY_PATH."
+                )
+                self.missing[ValidationLevel.ERROR].append("COMPANY_NEWS_REPLAY_PATH")
 
 
         if mode in ["deepfund", "backtest"]:

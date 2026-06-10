@@ -4,12 +4,18 @@ import pandas as pd
 import pytest
 
 from backtest.providers import (
+    FileReplayNewsProvider,
     ProviderDataError,
     ProviderFailure,
     ReplayDailyCandleProvider,
     ReplayFundamentalsProvider,
     ReplayMacroProvider,
     ReplayNewsProvider,
+)
+from quantarena.news_diagnostics import (
+    classify_zero_reason,
+    clear_news_diagnostics,
+    peek_news_diagnostics,
 )
 
 
@@ -137,11 +143,120 @@ def test_replay_news_provider_handles_timezone_aware_datetime_object():
     assert [item["title"] for item in news] == ["included"]
 
 
+def test_replay_news_provider_includes_same_calendar_trading_day_items():
+    provider = ReplayNewsProvider(
+        {
+            "AAA": [
+                {"title": "same day", "publish_time": "2026-01-02T16:00:00Z", "publisher": "replay"},
+                {"title": "future day", "publish_time": "2026-01-03T00:00:00Z", "publisher": "replay"},
+            ]
+        }
+    )
+
+    news = provider.get_news("AAA", datetime(2026, 1, 2), limit=10, market="us")
+
+    assert [item["title"] for item in news] == ["same day"]
+
+
 def test_replay_news_provider_raises_for_missing_ticker():
     provider = ReplayNewsProvider({})
 
     with pytest.raises(ProviderDataError, match="Replay news missing for AAA"):
         provider.get_news("AAA", datetime(2026, 1, 2), limit=10, market="us")
+
+
+def test_file_replay_news_provider_loads_ticker_keyed_json_and_records_diagnostics(tmp_path):
+    clear_news_diagnostics()
+    fixture = tmp_path / "news.json"
+    fixture.write_text(
+        """
+        {
+          "AAA": [
+            {"title": "future", "publish_time": "2026-01-03", "publisher": "replay"},
+            {"title": "latest", "publish_time": "2026-01-02T16:00:00Z", "publisher": "replay"},
+            {"title": "older", "publish_time": "2026-01-01", "publisher": "replay"}
+          ],
+          "BBB": [
+            {"title": "other ticker", "publish_time": "2026-01-02", "publisher": "replay"}
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    provider = FileReplayNewsProvider(fixture)
+
+    news = provider.get_news("aaa", datetime(2026, 1, 2), limit=1, market="us")
+
+    assert [item["title"] for item in news] == ["latest"]
+    diagnostics = peek_news_diagnostics()
+    assert diagnostics[-1]["provider"] == "replay_news"
+    assert diagnostics[-1]["ticker"] == "aaa"
+    assert diagnostics[-1]["raw_count"] == 3
+    assert diagnostics[-1]["date_filtered_count"] == 2
+    assert diagnostics[-1]["final_count"] == 1
+    assert diagnostics[-1]["zero_reason"] == "not_zero"
+    clear_news_diagnostics()
+
+
+def test_file_replay_news_provider_loads_jsonl_by_ticker_or_symbol(tmp_path):
+    fixture = tmp_path / "news.jsonl"
+    fixture.write_text(
+        "\n".join(
+            [
+                '{"ticker":"AAA","title":"ticker row","publish_time":"2026-01-02","publisher":"replay"}',
+                '{"symbol":"BBB","title":"symbol row","publish_time":"2026-01-02","publisher":"replay"}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    provider = FileReplayNewsProvider(fixture)
+
+    news = provider.get_news("BBB", datetime(2026, 1, 2), limit=10, market="us")
+
+    assert [item["title"] for item in news] == ["symbol row"]
+
+
+def test_file_replay_news_provider_records_future_only_zero_reason(tmp_path):
+    clear_news_diagnostics()
+    fixture = tmp_path / "news.json"
+    fixture.write_text(
+        '{"AAA":[{"title":"future","publish_time":"2026-01-03","publisher":"replay"}]}',
+        encoding="utf-8",
+    )
+    provider = FileReplayNewsProvider(fixture)
+
+    news = provider.get_news("AAA", datetime(2026, 1, 2), limit=10, market="us")
+
+    assert news == []
+    assert peek_news_diagnostics()[-1]["zero_reason"] == "future_only"
+    clear_news_diagnostics()
+
+
+def test_file_replay_news_provider_raises_for_missing_fixture(tmp_path):
+    with pytest.raises(ProviderDataError, match="Replay news fixture not found"):
+        FileReplayNewsProvider(tmp_path / "missing.json")
+
+
+def test_file_replay_news_provider_rejects_jsonl_missing_ticker(tmp_path):
+    fixture = tmp_path / "news.jsonl"
+    fixture.write_text('{"title":"missing ticker"}\n', encoding="utf-8")
+
+    with pytest.raises(ProviderDataError, match="missing ticker/symbol"):
+        FileReplayNewsProvider(fixture)
+
+
+@pytest.mark.parametrize(
+    ("counts", "expected"),
+    [
+        ({"raw_count": 0, "date_filtered_count": 0, "final_count": 0}, "provider_empty"),
+        ({"raw_count": 3, "date_filtered_count": 0, "final_count": 0}, "future_only"),
+        ({"raw_count": 3, "date_filtered_count": 2, "ticker_filtered_count": 0, "final_count": 0}, "ticker_miss"),
+        ({"raw_count": 3, "date_filtered_count": 2, "topic_filtered_count": 0, "final_count": 0}, "filtered_empty"),
+        ({"raw_count": 3, "date_filtered_count": 2, "final_count": 1}, "not_zero"),
+    ],
+)
+def test_classify_zero_reason(counts, expected):
+    assert classify_zero_reason(**counts) == expected
 
 
 def test_replay_fundamentals_provider_returns_payload_by_ticker():

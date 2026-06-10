@@ -1,8 +1,5 @@
-# backtest-news-diagnostics Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-backtest-decision-news-diagnostics. Update Purpose after archive.
-## Requirements
 ### Requirement: Record Company News Fetch Diagnostics
 The system SHALL record machine-readable company-news fetch diagnostics for backtest news requests, including a zero-result reason when no usable news items are returned.
 
@@ -21,4 +18,3 @@ The system SHALL record machine-readable company-news fetch diagnostics for back
 #### Scenario: Diagnostics do not expose raw news payloads
 - **WHEN** company-news diagnostics are written
 - **THEN** the diagnostics SHALL contain counts, provider metadata, filter-stage metadata, and zero-result classification only, not full raw article content.
-

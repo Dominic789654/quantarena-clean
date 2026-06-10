@@ -307,6 +307,97 @@ def test_router_uses_tavily_for_us_news_when_enabled():
     assert result == expected
 
 
+def test_router_uses_replay_news_for_us_before_live_sources(monkeypatch, tmp_path):
+    """Router should route explicit replay news before live/latest providers."""
+    fixture = tmp_path / "news.jsonl"
+    fixture.write_text(
+        "\n".join(
+            [
+                '{"ticker":"AAPL","title":"replay item","publish_time":"2025-09-01T15:00:00Z","publisher":"fixture","url":"https://example.com/r"}',
+                '{"ticker":"AAPL","title":"future item","publish_time":"2025-09-02T00:00:00Z","publisher":"fixture"}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("COMPANY_NEWS_REPLAY_PATH", str(fixture))
+    router = router_mod.Router.__new__(router_mod.Router)
+    router._source = router_mod.APISource.YFINANCE
+    router._api_category = "yfinance"
+    router._tavily_news_api = None
+    router._akshare_news_api = None
+    router._replay_news_api = None
+    router._news_provider = "replay"
+    router.api = Mock()
+    router.api.get_news.side_effect = AssertionError("live source should not be called")
+
+    with patch.object(router_mod, "TavilyNewsAPI", side_effect=AssertionError("tavily should not be constructed")):
+        result = router.get_us_stock_news("AAPL", datetime(2025, 9, 1), 3)
+
+    assert len(result) == 1
+    assert result[0].title == "replay item"
+    assert result[0].publisher == "fixture"
+    assert result[0].link == "https://example.com/r"
+
+
+def test_router_uses_replay_news_for_cn_before_live_sources(monkeypatch, tmp_path):
+    """Router should route CN replay news before Tavily/AKShare/Tushare."""
+    fixture = tmp_path / "news.json"
+    fixture.write_text(
+        '{"600519":[{"title":"cn replay","publish_time":"2025-09-01","publisher":"fixture"}]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("COMPANY_NEWS_REPLAY_PATH", str(fixture))
+    router = router_mod.Router.__new__(router_mod.Router)
+    router._source = router_mod.APISource.TUSHARE
+    router._api_category = "tushare"
+    router._tavily_news_api = None
+    router._akshare_news_api = None
+    router._replay_news_api = None
+    router._news_provider = "replay"
+    router.api = Mock()
+    router.api.get_news.side_effect = AssertionError("live source should not be called")
+
+    result = router.get_cn_stock_news("600519", datetime(2025, 9, 1), 3)
+
+    assert len(result) == 1
+    assert result[0].title == "cn replay"
+
+
+def test_router_replay_raises_when_path_missing(monkeypatch):
+    """Explicit replay provider should fail clearly when fixture path is missing."""
+    monkeypatch.delenv("COMPANY_NEWS_REPLAY_PATH", raising=False)
+    router = router_mod.Router.__new__(router_mod.Router)
+    router._source = router_mod.APISource.YFINANCE
+    router._api_category = "yfinance"
+    router._tavily_news_api = None
+    router._akshare_news_api = None
+    router._replay_news_api = None
+    router._news_provider = "replay"
+    router.api = Mock()
+
+    with pytest.raises(router_mod.ProviderDataError, match="COMPANY_NEWS_REPLAY_PATH is required"):
+        router.get_us_stock_news("AAPL", datetime(2025, 9, 1), 3)
+
+
+def test_router_replay_raises_for_missing_fixture_ticker(monkeypatch, tmp_path):
+    """Explicit replay provider should not silently fall back when ticker is absent."""
+    fixture = tmp_path / "news.json"
+    fixture.write_text('{"MSFT":[]}', encoding="utf-8")
+    monkeypatch.setenv("COMPANY_NEWS_REPLAY_PATH", str(fixture))
+    router = router_mod.Router.__new__(router_mod.Router)
+    router._source = router_mod.APISource.YFINANCE
+    router._api_category = "yfinance"
+    router._tavily_news_api = None
+    router._akshare_news_api = None
+    router._replay_news_api = None
+    router._news_provider = "replay"
+    router.api = Mock()
+    router.api.get_news.side_effect = AssertionError("live source should not be called")
+
+    with pytest.raises(router_mod.ProviderDataError, match="Replay news missing for AAPL"):
+        router.get_us_stock_news("AAPL", datetime(2025, 9, 1), 3)
+
+
 def test_router_falls_back_to_tushare_when_tavily_fails():
     """Router should gracefully fall back to original CN source on Tavily errors."""
 

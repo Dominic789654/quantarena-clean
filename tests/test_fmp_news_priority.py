@@ -164,9 +164,43 @@ def test_fmp_news_records_zero_result_filter_diagnostics(monkeypatch):
     assert record["date_filtered_count"] == 1
     assert record["ticker_filtered_count"] == 0
     assert record["final_count"] == 0
+    assert record["zero_reason"] == "ticker_miss"
     assert [stage["endpoint"] for stage in record["stages"]] == [
         "/stable/news/stock",
         "/stable/news/general-latest",
         "/stable/fmp-articles",
     ]
+    clear_news_diagnostics()
+
+
+def test_fmp_news_records_future_only_zero_reason(monkeypatch):
+    clear_news_diagnostics()
+    api = _build_api(monkeypatch)
+
+    def fake_request_json(path, params=None):
+        if path == "/stable/news/stock":
+            return [
+                {
+                    "symbol": "AAPL",
+                    "publishedDate": "2026-03-10 07:36:00",
+                    "publisher": "FutureProvider",
+                    "title": "AAPL future item",
+                    "text": "Future Apple news",
+                }
+            ]
+        if path == "/stable/news/general-latest":
+            return []
+        if path == "/stable/fmp-articles":
+            return []
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(api, "_request_json", fake_request_json)
+
+    news = api.get_news(ticker="AAPL", trading_date=datetime(2026, 3, 9), limit=3)
+
+    diagnostics = peek_news_diagnostics()
+    assert news == []
+    assert diagnostics[-1]["raw_count"] == 1
+    assert diagnostics[-1]["date_filtered_count"] == 0
+    assert diagnostics[-1]["zero_reason"] == "future_only"
     clear_news_diagnostics()

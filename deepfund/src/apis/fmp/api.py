@@ -15,7 +15,7 @@ import requests
 
 from apis.alphavantage.api_model import Fundamentals, InsiderTrade, MacroEconomic
 from apis.common_model import MediaNews, OHLCVCandle
-from quantarena.news_diagnostics import record_news_diagnostic
+from quantarena.news_diagnostics import classify_zero_reason, record_news_diagnostic
 
 
 class FMPAPI:
@@ -478,6 +478,13 @@ class FMPAPI:
                 "ticker_filtered_count": merged["ticker_filtered_count"],
                 "topic_filtered_count": merged["topic_filtered_count"],
                 "final_count": final_count,
+                "zero_reason": classify_zero_reason(
+                    raw_count=merged["raw_count"],
+                    date_filtered_count=merged["date_filtered_count"],
+                    ticker_filtered_count=merged["ticker_filtered_count"] if ticker else None,
+                    topic_filtered_count=merged["topic_filtered_count"] if topic else None,
+                    final_count=final_count,
+                ),
                 "stages": stages,
             }
         )

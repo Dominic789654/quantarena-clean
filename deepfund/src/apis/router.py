@@ -6,6 +6,8 @@ import time
 from typing import Any, Dict, Optional
 
 from apis import YFinanceAPI, AlphaVantageAPI, FMPAPI, TavilyNewsAPI, AKShareNewsAPI
+from apis.common_model import MediaNews
+from backtest.providers import FileReplayNewsProvider, ProviderDataError
 from apis.tushare import TushareAPI
 from shared.config.provider_routing import default_us_data_provider, preferred_us_data_provider
 
@@ -134,6 +136,7 @@ class Router():
         self._source = source
         self._tavily_news_api = None
         self._akshare_news_api = None
+        self._replay_news_api = None
         self._news_provider = (news_provider or os.getenv("COMPANY_NEWS_PROVIDER", "default")).strip().lower()
 
         if source == APISource.YFINANCE:
@@ -170,6 +173,20 @@ class Router():
 
     def _is_akshare_strict(self) -> bool:
         return self._news_provider == "akshare_strict"
+
+    def _should_use_replay_news(self) -> bool:
+        return self._news_provider in {"replay", "replay_strict"}
+
+    def _is_replay_strict(self) -> bool:
+        return self._news_provider in {"replay", "replay_strict"}
+
+    def _get_replay_api(self) -> FileReplayNewsProvider:
+        if self._replay_news_api is None:
+            replay_path = os.getenv("COMPANY_NEWS_REPLAY_PATH", "").strip()
+            if not replay_path:
+                raise ProviderDataError("COMPANY_NEWS_REPLAY_PATH is required when COMPANY_NEWS_PROVIDER=replay")
+            self._replay_news_api = FileReplayNewsProvider(replay_path)
+        return self._replay_news_api
 
     def _get_tavily_api(self) -> TavilyNewsAPI:
         if self._tavily_news_api is None:
@@ -214,7 +231,77 @@ class Router():
             return
         print(f"{base} status=ok items={item_count if item_count is not None else 0}")
 
+    @staticmethod
+    def _normalize_replay_news_items(news_items: list[Any]) -> list[MediaNews]:
+        normalized: list[MediaNews] = []
+        for item in news_items:
+            if isinstance(item, MediaNews):
+                normalized.append(item)
+                continue
+            if hasattr(item, "model_dump"):
+                payload = item.model_dump()
+            elif isinstance(item, dict):
+                payload = dict(item)
+            else:
+                payload = {
+                    "title": getattr(item, "title", ""),
+                    "publish_time": getattr(item, "publish_time", ""),
+                    "publisher": getattr(item, "publisher", ""),
+                    "link": getattr(item, "link", None),
+                    "summary": getattr(item, "summary", None),
+                }
+            normalized.append(
+                MediaNews(
+                    title=str(payload.get("title") or ""),
+                    publish_time=str(
+                        payload.get("publish_time")
+                        or payload.get("published")
+                        or payload.get("publishedDate")
+                        or payload.get("published_date")
+                        or payload.get("date")
+                        or ""
+                    ),
+                    publisher=str(
+                        payload.get("publisher")
+                        or payload.get("source")
+                        or payload.get("site")
+                        or "replay"
+                    ),
+                    link=payload.get("link") or payload.get("url"),
+                    summary=payload.get("summary") or payload.get("content") or payload.get("text"),
+                )
+            )
+        return normalized
+
+    def _get_replay_news(self, ticker, trading_date, news_count, market: str) -> list[MediaNews]:
+        replay_api = self._get_replay_api()
+        news = self._call_with_stats(
+            "replay_news",
+            replay_api.get_news,
+            ticker=ticker,
+            trading_date=trading_date,
+            limit=news_count,
+            market=market,
+        )
+        normalized = self._normalize_replay_news_items(news)
+        self._log_news_fetch("replay_news", market, ticker, trading_date, item_count=len(normalized))
+        return normalized
+
     def get_us_stock_news(self, ticker, trading_date, news_count):
+        if self._should_use_replay_news():
+            try:
+                return self._get_replay_news(ticker, trading_date, news_count, "us")
+            except Exception as e:
+                self._log_news_fetch(
+                    "replay_news",
+                    "us",
+                    ticker,
+                    trading_date,
+                    error=e,
+                    strict=self._is_replay_strict(),
+                )
+                raise
+
         if self._should_use_tavily_news():
             try:
                 tavily_api = self._get_tavily_api()
@@ -292,6 +379,20 @@ class Router():
         return self.api.get_economic_indicators()
 
     def get_cn_stock_news(self, ticker, trading_date, news_count):
+        if self._should_use_replay_news():
+            try:
+                return self._get_replay_news(ticker, trading_date, news_count, "cn")
+            except Exception as e:
+                self._log_news_fetch(
+                    "replay_news",
+                    "cn",
+                    ticker,
+                    trading_date,
+                    error=e,
+                    strict=self._is_replay_strict(),
+                )
+                raise
+
         if self._should_use_tavily_news():
             try:
                 tavily_api = self._get_tavily_api()

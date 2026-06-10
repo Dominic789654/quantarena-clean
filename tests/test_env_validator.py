@@ -73,6 +73,7 @@ class TestEnvValidator:
             "OPENROUTER_API_KEY",
             "TAVILY_API_KEY",
             "COMPANY_NEWS_PROVIDER",
+            "COMPANY_NEWS_REPLAY_PATH",
             "DEEPFUND_US_API_SOURCE",
             "DEEPFUND_CN_API_SOURCE",
         ]
@@ -286,6 +287,7 @@ class TestValidateEnvFunction:
             "OPENAI_API_KEY",
             "TAVILY_API_KEY",
             "COMPANY_NEWS_PROVIDER",
+            "COMPANY_NEWS_REPLAY_PATH",
         ]
         for var in vars_to_clear:
             if var in os.environ:
@@ -332,6 +334,7 @@ class TestCheckEnvQuick:
             "OPENAI_API_KEY",
             "TAVILY_API_KEY",
             "COMPANY_NEWS_PROVIDER",
+            "COMPANY_NEWS_REPLAY_PATH",
         ]
         for var in vars_to_clear:
             if var in os.environ:
@@ -410,6 +413,36 @@ class TestIntegration:
         result = validator.validate(mode="backtest", raise_on_error=False, verbose=False)
         assert result is True
         assert all("TAVILY_API_KEY" not in msg for msg in validator.errors)
+
+    @pytest.mark.parametrize("provider", ["replay", "replay_strict"])
+    def test_replay_news_provider_requires_fixture_path(self, provider):
+        """Replay news providers should require an explicit fixture path."""
+        os.environ["REASONING_MODEL_PROVIDER"] = "openai"
+        os.environ["REASONING_MODEL_ID"] = "gpt-4o"
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["TUSHARE_API_KEY"] = "test-tushare-key"
+        os.environ["COMPANY_NEWS_PROVIDER"] = provider
+
+        validator = EnvValidator()
+        result = validator.validate(mode="backtest", raise_on_error=False, verbose=False)
+
+        assert result is False
+        assert any("COMPANY_NEWS_REPLAY_PATH" in msg for msg in validator.errors)
+
+    @pytest.mark.parametrize("provider", ["replay", "replay_strict"])
+    def test_replay_news_provider_passes_with_fixture_path(self, provider):
+        """Replay news providers should pass env validation once fixture path is configured."""
+        os.environ["REASONING_MODEL_PROVIDER"] = "openai"
+        os.environ["REASONING_MODEL_ID"] = "gpt-4o"
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["TUSHARE_API_KEY"] = "test-tushare-key"
+        os.environ["COMPANY_NEWS_PROVIDER"] = provider
+        os.environ["COMPANY_NEWS_REPLAY_PATH"] = "/tmp/news.jsonl"
+
+        validator = EnvValidator()
+        result = validator.validate(mode="backtest", raise_on_error=False, verbose=False)
+
+        assert result is True
 
 
 if __name__ == "__main__":

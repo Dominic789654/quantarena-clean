@@ -6,9 +6,12 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
 import pandas as pd
+
+from quantarena.news_diagnostics import classify_zero_reason, record_news_diagnostic
 
 
 class ProviderDataError(RuntimeError):
@@ -133,10 +136,56 @@ class ReplayNewsProvider:
         filtered = [
             item
             for item in self.items[ticker]
-            if _news_publish_time(item) <= cutoff
+            if _news_within_trading_date(item, cutoff)
         ]
         filtered.sort(key=_news_publish_time, reverse=True)
         return list(filtered[:limit])
+
+
+@dataclass(frozen=True)
+class FileReplayNewsProvider:
+    """File-backed company-news provider for deterministic historical replay."""
+
+    path: str | Path
+    name: str = "replay_news"
+
+    def __post_init__(self) -> None:
+        fixture_path = Path(self.path)
+        try:
+            items = _load_replay_news_fixture(fixture_path)
+        except ProviderDataError:
+            raise
+        except Exception as exc:
+            raise ProviderDataError(f"Replay news fixture could not be loaded: {fixture_path}") from exc
+
+        object.__setattr__(self, "_path", fixture_path)
+        object.__setattr__(self, "_items", items)
+
+    def get_news(self, ticker: str, trading_date: datetime, limit: int, market: str) -> list[Any]:
+        ticker_key = _normalize_ticker(ticker)
+        if ticker_key not in self._items:
+            raise ProviderDataError(f"Replay news missing for {ticker}")
+
+        cutoff = _as_naive_utc(trading_date)
+        raw_items = list(self._items[ticker_key])
+        filtered = [
+            item
+            for item in raw_items
+            if _news_within_trading_date(item, cutoff)
+        ]
+        filtered.sort(key=_news_publish_time, reverse=True)
+        limited = list(filtered[:limit])
+        _record_replay_news_diagnostic(
+            provider=self.name,
+            ticker=ticker,
+            trading_date=trading_date,
+            limit=limit,
+            market=market,
+            raw_count=len(raw_items),
+            date_filtered_count=len(filtered),
+            final_count=len(limited),
+        )
+        return limited
 
 
 @dataclass(frozen=True)
@@ -208,9 +257,107 @@ def _with_datetime_index(frame: pd.DataFrame) -> pd.DataFrame:
     return dated.sort_index()
 
 
+def _load_replay_news_fixture(path: Path) -> dict[str, list[Any]]:
+    if not path.exists():
+        raise ProviderDataError(f"Replay news fixture not found: {path}")
+    if not path.is_file():
+        raise ProviderDataError(f"Replay news fixture is not a file: {path}")
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ProviderDataError(f"Replay news fixture is not readable: {path}") from exc
+
+    suffix = path.suffix.lower()
+    if suffix == ".jsonl":
+        return _load_replay_news_jsonl(text, path)
+    if suffix == ".json":
+        return _load_replay_news_json(text, path)
+    raise ProviderDataError(f"Replay news fixture must be JSON or JSONL: {path}")
+
+
+def _load_replay_news_json(text: str, path: Path) -> dict[str, list[Any]]:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ProviderDataError(f"Replay news fixture contains invalid JSON: {path}") from exc
+
+    if not isinstance(payload, Mapping):
+        raise ProviderDataError(f"Replay news JSON fixture must be ticker-keyed: {path}")
+
+    items: dict[str, list[Any]] = {}
+    for ticker, rows in payload.items():
+        if not isinstance(rows, list):
+            raise ProviderDataError(f"Replay news rows for {ticker} must be a list: {path}")
+        items[_normalize_ticker(ticker)] = list(rows)
+    return items
+
+
+def _load_replay_news_jsonl(text: str, path: Path) -> dict[str, list[Any]]:
+    items: dict[str, list[Any]] = {}
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            row = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ProviderDataError(
+                f"Replay news JSONL fixture has invalid JSON on line {line_number}: {path}"
+            ) from exc
+        if not isinstance(row, Mapping):
+            raise ProviderDataError(
+                f"Replay news JSONL row {line_number} must be an object: {path}"
+            )
+        ticker = row.get("ticker") or row.get("symbol")
+        if not ticker:
+            raise ProviderDataError(
+                f"Replay news JSONL row {line_number} is missing ticker/symbol: {path}"
+            )
+        items.setdefault(_normalize_ticker(ticker), []).append(dict(row))
+    return items
+
+
+def _record_replay_news_diagnostic(
+    *,
+    provider: str,
+    ticker: str,
+    trading_date: datetime,
+    limit: int,
+    market: str,
+    raw_count: int,
+    date_filtered_count: int,
+    final_count: int,
+) -> None:
+    record_news_diagnostic(
+        {
+            "provider": provider,
+            "market": market,
+            "ticker": ticker,
+            "trading_date": trading_date.strftime("%Y-%m-%d") if hasattr(trading_date, "strftime") else trading_date,
+            "limit": limit,
+            "raw_count": raw_count,
+            "date_filtered_count": date_filtered_count,
+            "final_count": final_count,
+            "zero_reason": classify_zero_reason(
+                raw_count=raw_count,
+                date_filtered_count=date_filtered_count,
+                final_count=final_count,
+            ),
+        }
+    )
+
+
 def _news_publish_time(item: Any) -> datetime:
     if isinstance(item, Mapping):
-        raw_value = item.get("publish_time") or item.get("published") or ""
+        raw_value = (
+            item.get("publish_time")
+            or item.get("published")
+            or item.get("publishedDate")
+            or item.get("published_date")
+            or item.get("date")
+            or ""
+        )
     else:
         raw_value = getattr(item, "publish_time", "")
 
@@ -221,6 +368,17 @@ def _news_publish_time(item: Any) -> datetime:
         if pd.notna(parsed):
             return _as_naive_utc(parsed.to_pydatetime())
     return datetime.min
+
+
+def _news_within_trading_date(item: Any, trading_date: datetime) -> bool:
+    publish_time = _news_publish_time(item)
+    if publish_time == datetime.min:
+        return True
+    return publish_time.date() <= trading_date.date()
+
+
+def _normalize_ticker(ticker: Any) -> str:
+    return str(ticker or "").strip().upper()
 
 
 def _as_naive_utc(value: datetime) -> datetime:
