@@ -39,6 +39,8 @@ DEFAULT_MULTI_PERSONALITIES = (
 )
 DEFAULT_MULTI_MAX_WORKERS = 5
 DEFAULT_OUTPUT_ROOT = Path("reports/backtest/fixed_benchmarks")
+DEFAULT_LOG_TAIL_LINES = 40
+DEFAULT_LOG_TAIL_CHARS = 4000
 
 REPORT_PATH_RE = re.compile(r"Reports saved to:\s*(?P<path>\S+)")
 MULTI_REPORT_PATH_RE = re.compile(r"Detailed reports saved to:\s*(?P<path>\S+)")
@@ -105,6 +107,10 @@ class FixedBenchmarkRun:
     news_diagnostics_paths: list[Path] = field(default_factory=list)
     artifact_review: dict[str, Any] = field(default_factory=dict)
     metrics: dict[str, Any] = field(default_factory=dict)
+    stdout_log_path: Path | None = None
+    stderr_log_path: Path | None = None
+    stdout_tail: str = ""
+    stderr_tail: str = ""
     stdout: str = ""
     stderr: str = ""
     error: str | None = None
@@ -125,8 +131,10 @@ class FixedBenchmarkRun:
             "news_diagnostics_paths": [str(path) for path in self.news_diagnostics_paths],
             "artifact_review": self.artifact_review,
             "metrics": self.metrics,
-            "stdout": self.stdout,
-            "stderr": self.stderr,
+            "stdout_log_path": str(self.stdout_log_path) if self.stdout_log_path else None,
+            "stderr_log_path": str(self.stderr_log_path) if self.stderr_log_path else None,
+            "stdout_tail": self.stdout_tail,
+            "stderr_tail": self.stderr_tail,
             "error": self.error,
         }
 
@@ -260,6 +268,7 @@ def run_fixed_backtest_benchmark(
             mode=current_mode,
             config=effective_config,
             project_root=project_root,
+            summary_dir=summary_dir,
             executor=run_executor,
             visualizer_writer=visualizer_writer,
         )
@@ -341,6 +350,7 @@ def _run_mode(
     mode: str,
     config: FixedBenchmarkConfig,
     project_root: Path,
+    summary_dir: Path,
     executor: RunnerExecutor,
     visualizer_writer: VisualizerWriter,
 ) -> FixedBenchmarkRun:
@@ -354,6 +364,14 @@ def _run_mode(
     )
     stdout = completed.stdout or ""
     stderr = completed.stderr or ""
+    stdout_log_path, stderr_log_path = _write_child_output_logs(
+        summary_dir=summary_dir,
+        mode=mode,
+        stdout=stdout,
+        stderr=stderr,
+    )
+    stdout_tail = _tail_text(stdout)
+    stderr_tail = _tail_text(stderr)
     report_dir = _discover_report_dir(stdout=stdout, stderr=stderr, project_root=project_root, mode=mode)
     run_id = _discover_run_id(stdout=stdout, stderr=stderr, report_dir=report_dir)
 
@@ -365,6 +383,10 @@ def _run_mode(
             exit_code=completed.returncode,
             run_id=run_id,
             report_dir=report_dir,
+            stdout_log_path=stdout_log_path,
+            stderr_log_path=stderr_log_path,
+            stdout_tail=stdout_tail,
+            stderr_tail=stderr_tail,
             stdout=stdout,
             stderr=stderr,
             error=_last_error_text(stdout=stdout, stderr=stderr) or "backtest command failed",
@@ -377,6 +399,10 @@ def _run_mode(
             command=command,
             exit_code=completed.returncode,
             run_id=run_id,
+            stdout_log_path=stdout_log_path,
+            stderr_log_path=stderr_log_path,
+            stdout_tail=stdout_tail,
+            stderr_tail=stderr_tail,
             stdout=stdout,
             stderr=stderr,
             error="could not discover report directory from backtest output",
@@ -400,6 +426,10 @@ def _run_mode(
             news_diagnostics_paths=[news_diagnostics_path] if news_diagnostics_path.exists() else [],
             artifact_review=review_payload,
             metrics=_load_multi_personality_metrics(report_dir),
+            stdout_log_path=stdout_log_path,
+            stderr_log_path=stderr_log_path,
+            stdout_tail=stdout_tail,
+            stderr_tail=stderr_tail,
             stdout=stdout,
             stderr=stderr,
             error=None if review.ok else _review_error_text(review_payload),
@@ -436,10 +466,45 @@ def _run_mode(
         news_diagnostics_path=news_diagnostics_path if news_diagnostics_path.exists() else None,
         news_diagnostics_paths=news_diagnostics_paths,
         metrics=dict(artifacts.metrics),
+        stdout_log_path=stdout_log_path,
+        stderr_log_path=stderr_log_path,
+        stdout_tail=stdout_tail,
+        stderr_tail=stderr_tail,
         stdout=stdout,
         stderr=stderr,
         error=dashboard_error or _artifact_error_text(artifacts.errors),
     )
+
+
+def _write_child_output_logs(
+    *,
+    summary_dir: Path,
+    mode: str,
+    stdout: str,
+    stderr: str,
+) -> tuple[Path, Path]:
+    log_dir = summary_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    safe_mode = re.sub(r"[^A-Za-z0-9_.-]+", "_", mode).strip("_") or "mode"
+    stdout_path = log_dir / f"{safe_mode}-stdout.log"
+    stderr_path = log_dir / f"{safe_mode}-stderr.log"
+    stdout_path.write_text(stdout, encoding="utf-8")
+    stderr_path.write_text(stderr, encoding="utf-8")
+    return stdout_path, stderr_path
+
+
+def _tail_text(
+    text: str,
+    *,
+    max_lines: int = DEFAULT_LOG_TAIL_LINES,
+    max_chars: int = DEFAULT_LOG_TAIL_CHARS,
+) -> str:
+    if not text:
+        return ""
+    tail = "\n".join(text.splitlines()[-max_lines:])
+    if len(tail) <= max_chars:
+        return tail
+    return tail[-max_chars:]
 
 
 def _expand_modes(mode: str) -> tuple[str, ...]:

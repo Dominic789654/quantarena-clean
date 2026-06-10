@@ -166,6 +166,14 @@ def test_run_fixed_benchmark_both_writes_summary_and_dashboards(tmp_path: Path):
     assert payload["runs"][0]["benchmark_diagnostics_path"].endswith("benchmark_diagnostics.jsonl")
     assert payload["runs"][1]["benchmark_source"] == "equal_weight_basket"
     assert payload["runs"][1]["benchmark_diagnostics_path"] is None
+    assert "stdout" not in payload["runs"][0]
+    assert "stderr" not in payload["runs"][0]
+    assert "Run ID: simple_run" in payload["runs"][0]["stdout_tail"]
+    assert payload["runs"][0]["stderr_tail"] == ""
+    assert Path(payload["runs"][0]["stdout_log_path"]).read_text(encoding="utf-8").startswith(
+        "Run ID: simple_run"
+    )
+    assert Path(payload["runs"][0]["stderr_log_path"]).read_text(encoding="utf-8") == ""
 
 
 def test_run_fixed_benchmark_multi_reviews_artifacts(tmp_path: Path):

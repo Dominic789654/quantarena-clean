@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "simple": {
+      "required_modes": ["simple"],
+      "modes": {
+        "simple": {
+          "ok": true,
+          "benchmark_source": "equal_weight_basket",
+          "required_paths": ["report_dir", "dashboard_path"],
+          "metrics": {
+            "metrics.total_return": {"expected": -0.18, "abs_tolerance": 0.02},
+            "metrics.final_value": {"expected": 9981.77, "abs_tolerance": 0.01},
+            "metrics.max_drawdown": {"expected": 0.26, "abs_tolerance": 0.01},
+            "metrics.sharpe_ratio": {"expected": -6.4, "abs_tolerance": 0.02},
+            "metrics.total_trades": {"expected": 2, "abs_tolerance": 0}
+          }
+        }
+      }
+    },
+    "multi": {
+      "required_modes": ["multi"],
+      "modes": {
+        "multi": {
+          "ok": true,
+          "artifact_review_ok": true,
+          "required_paths": ["report_dir"],
+          "required_personalities": [
+            "macro_tactical",
+            "fundamental_value",
+            "behavioral_momentum",
+            "smart_beta_passive",
+            "equal_weight_index"
+          ],
+          "personality_metrics": {
+            "*": {
+              "Error Count": {"expected": 0, "abs_tolerance": 0}
+            }
+          },
+          "news_diagnostics": {
+            "require_nonzero_final_count": true
+          },
+          "benchmark_diagnostics": {
+            "cache_hits": [
+              {"index_code": "^GSPC"}
+            ]
+          }
+        }
+      }
+    }
+  }
+}
