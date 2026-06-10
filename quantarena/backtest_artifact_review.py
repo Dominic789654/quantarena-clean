@@ -43,6 +43,7 @@ class BacktestArtifactReview:
     root: Path
     findings: list[BacktestArtifactFinding] = field(default_factory=list)
     runs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    artifacts: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -62,6 +63,7 @@ class BacktestArtifactReview:
                 for finding in self.findings
             ],
             "runs": self.runs,
+            "artifacts": self.artifacts,
         }
 
 
@@ -98,6 +100,33 @@ def review_multi_personality_artifacts(
         )
         return review
 
+    artifact_schema_version = int(comparison_payload.get("artifact_schema_version", 1) or 1)
+    require_v2_artifacts = artifact_schema_version >= 2
+    daily_decisions = _load_jsonl_artifact(
+        review,
+        root / "daily_decisions.jsonl",
+        required=require_v2_artifacts,
+    )
+    news_diagnostics = _load_jsonl_artifact(
+        review,
+        root / "news_diagnostics.jsonl",
+        required=require_v2_artifacts,
+    )
+    review.artifacts = {
+        "artifact_schema_version": artifact_schema_version,
+        "daily_decisions_count": len(daily_decisions),
+        "news_diagnostics_count": len(news_diagnostics),
+    }
+    if require_v2_artifacts and not daily_decisions:
+        review.findings.append(
+            BacktestArtifactFinding(
+                severity="error",
+                personality="",
+                run_id=str(comparison_payload.get("run_id") or ""),
+                message="daily_decisions.jsonl is missing or empty",
+            )
+        )
+
     base_backtest_root = Path(backtest_root) if backtest_root is not None else root.parents[1] / "backtest"
     for result in _iter_personality_results(comparison_payload):
         personality = str(result.get("personality") or "")
@@ -120,6 +149,66 @@ def review_multi_personality_artifacts(
         _check_specialized_metrics(review, personality, run_id, artifacts)
 
     return review
+
+
+def _load_jsonl_artifact(
+    review: BacktestArtifactReview,
+    path: Path,
+    *,
+    required: bool,
+) -> list[dict[str, Any]]:
+    if not path.is_file():
+        if required:
+            review.findings.append(
+                BacktestArtifactFinding(
+                    severity="error",
+                    personality="",
+                    run_id="",
+                    message=f"missing required artifact: {path.name}",
+                )
+            )
+        return []
+
+    rows: list[dict[str, Any]] = []
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    review.findings.append(
+                        BacktestArtifactFinding(
+                            severity="error",
+                            personality="",
+                            run_id="",
+                            message=f"{path.name} line {line_number} invalid JSON: {exc}",
+                        )
+                    )
+                    continue
+                if not isinstance(payload, dict):
+                    review.findings.append(
+                        BacktestArtifactFinding(
+                            severity="error",
+                            personality="",
+                            run_id="",
+                            message=f"{path.name} line {line_number} must be an object",
+                        )
+                    )
+                    continue
+                rows.append(payload)
+    except (OSError, UnicodeDecodeError) as exc:
+        review.findings.append(
+            BacktestArtifactFinding(
+                severity="error",
+                personality="",
+                run_id="",
+                message=f"unable to read {path.name}: {exc}",
+            )
+        )
+    return rows
 
 
 def _iter_personality_results(payload: dict[str, Any]) -> list[dict[str, Any]]:

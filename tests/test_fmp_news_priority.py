@@ -7,6 +7,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "deepfund" / "src"))
 
 from apis.fmp.api import FMPAPI
+from quantarena.news_diagnostics import clear_news_diagnostics, peek_news_diagnostics
 
 
 def _build_api(monkeypatch) -> FMPAPI:
@@ -113,3 +114,59 @@ def test_fmp_news_uses_articles_after_general_miss(monkeypatch):
     assert calls[-1] == "/stable/fmp-articles"
     assert len(news) == 1
     assert news[0].publisher == "ArticleProvider"
+
+
+def test_fmp_news_records_zero_result_filter_diagnostics(monkeypatch):
+    clear_news_diagnostics()
+    api = _build_api(monkeypatch)
+    general_calls = 0
+
+    def fake_request_json(path, params=None):
+        nonlocal general_calls
+        if path == "/stable/news/stock":
+            return [
+                {
+                    "symbol": "AAPL",
+                    "publishedDate": "2026-03-10 07:36:00",
+                    "publisher": "FutureProvider",
+                    "title": "AAPL future item",
+                    "text": "Future Apple news",
+                }
+            ]
+        if path == "/stable/news/general-latest":
+            general_calls += 1
+            if general_calls > 1:
+                return []
+            return [
+                {
+                    "publishedDate": "2026-03-08 08:00:00",
+                    "publisher": "OtherProvider",
+                    "title": "MSFT gains attention",
+                    "text": "MSFT mentioned in general feed",
+                }
+            ]
+        if path == "/stable/fmp-articles":
+            return []
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(api, "_request_json", fake_request_json)
+
+    news = api.get_news(ticker="AAPL", trading_date=datetime(2026, 3, 9), limit=3)
+
+    diagnostics = peek_news_diagnostics()
+    assert news == []
+    assert len(diagnostics) == 1
+    record = diagnostics[0]
+    assert record["provider"] == "fmp"
+    assert record["ticker"] == "AAPL"
+    assert record["trading_date"] == "2026-03-09"
+    assert record["raw_count"] == 2
+    assert record["date_filtered_count"] == 1
+    assert record["ticker_filtered_count"] == 0
+    assert record["final_count"] == 0
+    assert [stage["endpoint"] for stage in record["stages"]] == [
+        "/stable/news/stock",
+        "/stable/news/general-latest",
+        "/stable/fmp-articles",
+    ]
+    clear_news_diagnostics()

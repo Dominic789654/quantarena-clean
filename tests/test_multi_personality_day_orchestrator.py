@@ -23,6 +23,7 @@ from backtest.engine import BacktestResult
 from backtest.workflow_adapter import BacktestWorkflowAdapter, SharedPhase1Artifact
 from backtest.portfolio_tracker import PortfolioTracker
 from backtest.multi_personality_engine import MultiPersonalityBacktest
+from quantarena.news_diagnostics import clear_news_diagnostics, peek_news_diagnostics, record_news_diagnostic
 
 
 class FakeSharedCache:
@@ -202,6 +203,73 @@ def test_multi_personality_run_shares_phase1_once_per_day(monkeypatch):
         assert [day for day, _ in engine.executed_days] == ["2026-01-02", "2026-01-05"]
 
     assert comparison.shared_data_stats["shared_phase1_days"] == 2
+
+
+def test_multi_personality_report_exports_daily_decisions_and_news_diagnostics(monkeypatch, tmp_path):
+    FakeBacktestEngine.instances = []
+    clear_news_diagnostics()
+    record_news_diagnostic(
+        {
+            "provider": "fmp",
+            "market": "us",
+            "ticker": "AAA",
+            "trading_date": "2026-01-02",
+            "raw_count": 1,
+            "date_filtered_count": 1,
+            "ticker_filtered_count": 0,
+            "topic_filtered_count": 0,
+            "final_count": 0,
+            "stages": [{"endpoint": "/stable/news/general-latest", "raw_count": 1, "final_count": 0}],
+        }
+    )
+    shared_adapter = FakeSharedSignalAdapter()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("backtest.multi_personality_engine.BacktestEngine", FakeBacktestEngine)
+    monkeypatch.setattr(
+        "backtest.multi_personality_engine.create_workflow_adapter",
+        lambda **kwargs: shared_adapter,
+    )
+
+    backtest = MultiPersonalityBacktest(
+        tickers=["AAA", "BBB"],
+        start_date="2026-01-02",
+        end_date="2026-01-05",
+        personalities=["balanced"],
+        use_llm=True,
+        analysts=["fundamental"],
+    )
+    backtest.shared_cache = FakeSharedCache()
+
+    comparison = backtest.run(prefetch=False, generate_report=True)
+    report_dir = tmp_path / "reports" / "multi_personality" / comparison.run_id
+
+    decision_rows = [
+        json.loads(line)
+        for line in (report_dir / "daily_decisions.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    news_rows = [
+        json.loads(line)
+        for line in (report_dir / "news_diagnostics.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert len(decision_rows) == 4
+    assert decision_rows[0] == {
+        "action": "HOLD",
+        "applied": True,
+        "date": "2026-01-02",
+        "justification": "shared-balanced",
+        "metadata": {"_applied": True},
+        "personality": "balanced",
+        "price": 100.0,
+        "risk_reasons": [],
+        "shares": 0,
+        "ticker": "AAA",
+    }
+    assert news_rows[0]["provider"] == "fmp"
+    assert news_rows[0]["ticker"] == "AAA"
+    assert news_rows[0]["raw_count"] == 1
+    assert peek_news_diagnostics() == []
 
 
 class FailingBacktestEngine(FakeBacktestEngine):

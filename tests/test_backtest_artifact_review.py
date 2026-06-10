@@ -8,6 +8,32 @@ from pathlib import Path
 from quantarena.backtest_artifact_review import review_multi_personality_artifacts
 
 
+def _write_multi_artifacts(
+    multi_dir: Path,
+    *,
+    daily_decisions: list[dict] | None = None,
+    news_diagnostics: list[dict] | None = None,
+) -> None:
+    decisions = daily_decisions if daily_decisions is not None else [
+        {
+            "date": "2026-01-02",
+            "personality": "behavioral_momentum",
+            "ticker": "AAA",
+            "action": "BUY",
+            "shares": 1,
+        }
+    ]
+    diagnostics = news_diagnostics if news_diagnostics is not None else []
+    (multi_dir / "daily_decisions.jsonl").write_text(
+        "".join(json.dumps(item) + "\n" for item in decisions),
+        encoding="utf-8",
+    )
+    (multi_dir / "news_diagnostics.jsonl").write_text(
+        "".join(json.dumps(item) + "\n" for item in diagnostics),
+        encoding="utf-8",
+    )
+
+
 def _write_run(
     root: Path,
     run_id: str,
@@ -37,6 +63,7 @@ def test_review_multi_personality_artifacts_flags_trades_without_audit(tmp_path:
     (multi_dir / "comparison_data.json").write_text(
         json.dumps(
             {
+                "artifact_schema_version": 2,
                 "personality_results": [
                     {
                         "personality": "fundamental_value",
@@ -47,6 +74,7 @@ def test_review_multi_personality_artifacts_flags_trades_without_audit(tmp_path:
         ),
         encoding="utf-8",
     )
+    _write_multi_artifacts(multi_dir)
     _write_run(
         backtest_root,
         "value-run",
@@ -70,6 +98,7 @@ def test_review_multi_personality_artifacts_accepts_matching_audit_and_metrics(t
     (multi_dir / "comparison_data.json").write_text(
         json.dumps(
             {
+                "artifact_schema_version": 2,
                 "personality_results": {
                     "behavioral_momentum": {
                         "personality": "behavioral_momentum",
@@ -79,6 +108,19 @@ def test_review_multi_personality_artifacts_accepts_matching_audit_and_metrics(t
             }
         ),
         encoding="utf-8",
+    )
+    _write_multi_artifacts(
+        multi_dir,
+        news_diagnostics=[
+            {
+                "provider": "fmp",
+                "ticker": "AAA",
+                "trading_date": "2026-01-02",
+                "raw_count": 0,
+                "final_count": 0,
+                "stages": [],
+            }
+        ],
     )
     _write_run(
         backtest_root,
@@ -99,3 +141,62 @@ def test_review_multi_personality_artifacts_accepts_matching_audit_and_metrics(t
     assert review.findings == []
     assert review.runs["behavioral_momentum"]["trade_count"] == 1
     assert review.runs["behavioral_momentum"]["broker_audit_count"] == 1
+    assert review.artifacts["daily_decisions_count"] == 1
+    assert review.artifacts["news_diagnostics_count"] == 1
+
+
+def test_review_multi_personality_artifacts_requires_daily_decisions(tmp_path: Path):
+    multi_dir = tmp_path / "reports" / "multi_personality" / "run"
+    backtest_root = tmp_path / "reports" / "backtest"
+    multi_dir.mkdir(parents=True)
+    (multi_dir / "comparison_data.json").write_text(
+        json.dumps(
+            {
+                "run_id": "comparison-run",
+                "artifact_schema_version": 2,
+                "personality_results": {
+                    "balanced": {
+                        "personality": "balanced",
+                        "run_id": "balanced-run",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (multi_dir / "news_diagnostics.jsonl").write_text("", encoding="utf-8")
+    _write_run(backtest_root, "balanced-run", metrics={"total_return": 0.1})
+
+    review = review_multi_personality_artifacts(multi_dir, backtest_root=backtest_root)
+
+    assert review.ok is False
+    messages = [finding.message for finding in review.findings]
+    assert "missing required artifact: daily_decisions.jsonl" in messages
+    assert "daily_decisions.jsonl is missing or empty" in messages
+
+
+def test_review_multi_personality_artifacts_allows_legacy_reports_without_v2_artifacts(tmp_path: Path):
+    multi_dir = tmp_path / "reports" / "multi_personality" / "run"
+    backtest_root = tmp_path / "reports" / "backtest"
+    multi_dir.mkdir(parents=True)
+    (multi_dir / "comparison_data.json").write_text(
+        json.dumps(
+            {
+                "personality_results": {
+                    "balanced": {
+                        "personality": "balanced",
+                        "run_id": "balanced-run",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_run(backtest_root, "balanced-run", metrics={"total_return": 0.1})
+
+    review = review_multi_personality_artifacts(multi_dir, backtest_root=backtest_root)
+
+    assert review.ok is True
+    assert review.artifacts["artifact_schema_version"] == 1
+    assert review.artifacts["daily_decisions_count"] == 0
+    assert review.artifacts["news_diagnostics_count"] == 0

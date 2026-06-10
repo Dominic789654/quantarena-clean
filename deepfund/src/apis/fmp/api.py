@@ -15,6 +15,7 @@ import requests
 
 from apis.alphavantage.api_model import Fundamentals, InsiderTrade, MacroEconomic
 from apis.common_model import MediaNews, OHLCVCandle
+from quantarena.news_diagnostics import record_news_diagnostic
 
 
 class FMPAPI:
@@ -382,16 +383,17 @@ class FMPAPI:
             articles.extend(item for item in data if isinstance(item, dict))
         return articles
 
-    def _collect_matching_news(
+    def _count_matching_news(
         self,
         rows: List[Dict[str, Any]],
         trading_date: Optional[datetime],
-        limit: int,
         ticker: Optional[str] = None,
         topic: Optional[str] = None,
-    ) -> List[MediaNews]:
-        """Filter raw rows and convert them into unified news items."""
-        results: List[MediaNews] = []
+    ) -> tuple[List[Dict[str, Any]], Dict[str, int]]:
+        """Filter raw news rows and return stage counts without raw payloads."""
+        date_rows: List[Dict[str, Any]] = []
+        ticker_rows: List[Dict[str, Any]] = []
+        topic_rows: List[Dict[str, Any]] = []
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -399,15 +401,86 @@ class FMPAPI:
             publish_time = self._to_str(row.get("date") or row.get("publishedDate"), "")
             if not self._within_trading_date(publish_time, trading_date):
                 continue
+            date_rows.append(row)
             if ticker and not self._article_matches_ticker(row, ticker):
                 continue
+            ticker_rows.append(row)
             if topic and not self._article_matches_topic(row, topic):
                 continue
+            topic_rows.append(row)
 
-            results.append(self._to_media_news(row))
-            if len(results) >= limit:
-                break
-        return results
+        final_rows = topic_rows
+        if not topic:
+            final_rows = ticker_rows if ticker else date_rows
+        return final_rows, {
+            "raw_count": len([row for row in rows if isinstance(row, dict)]),
+            "date_filtered_count": len(date_rows),
+            "ticker_filtered_count": len(ticker_rows) if ticker else len(date_rows),
+            "topic_filtered_count": len(topic_rows) if topic else (len(ticker_rows) if ticker else len(date_rows)),
+            "final_count": len(final_rows),
+        }
+
+    def _collect_matching_news(
+        self,
+        rows: List[Dict[str, Any]],
+        trading_date: Optional[datetime],
+        limit: int,
+        ticker: Optional[str] = None,
+        topic: Optional[str] = None,
+    ) -> tuple[List[MediaNews], Dict[str, int]]:
+        """Filter raw rows and convert them into unified news items."""
+        matched_rows, counts = self._count_matching_news(rows, trading_date, ticker=ticker, topic=topic)
+        results = [self._to_media_news(row) for row in matched_rows[:limit]]
+        return results, {**counts, "final_count": len(results)}
+
+    @staticmethod
+    def _diagnostic_stage(path: str, rows: List[Dict[str, Any]], counts: Dict[str, int]) -> Dict[str, Any]:
+        return {
+            "endpoint": path,
+            "raw_count": counts.get("raw_count", len(rows)),
+            "date_filtered_count": counts.get("date_filtered_count", 0),
+            "ticker_filtered_count": counts.get("ticker_filtered_count", 0),
+            "topic_filtered_count": counts.get("topic_filtered_count", counts.get("ticker_filtered_count", 0)),
+            "final_count": counts.get("final_count", 0),
+        }
+
+    @staticmethod
+    def _merge_stage_counts(stages: List[Dict[str, Any]]) -> Dict[str, int]:
+        return {
+            "raw_count": sum(int(stage.get("raw_count", 0) or 0) for stage in stages),
+            "date_filtered_count": sum(int(stage.get("date_filtered_count", 0) or 0) for stage in stages),
+            "ticker_filtered_count": sum(int(stage.get("ticker_filtered_count", 0) or 0) for stage in stages),
+            "topic_filtered_count": sum(int(stage.get("topic_filtered_count", 0) or 0) for stage in stages),
+            "final_count": sum(int(stage.get("final_count", 0) or 0) for stage in stages),
+        }
+
+    def _record_news_diagnostic(
+        self,
+        *,
+        ticker: Optional[str],
+        topic: Optional[str],
+        trading_date: Optional[datetime],
+        limit: int,
+        stages: List[Dict[str, Any]],
+        final_count: int,
+    ) -> None:
+        merged = self._merge_stage_counts(stages)
+        record_news_diagnostic(
+            {
+                "provider": "fmp",
+                "market": "us",
+                "ticker": ticker,
+                "topic": topic,
+                "trading_date": trading_date.strftime("%Y-%m-%d") if hasattr(trading_date, "strftime") else trading_date,
+                "limit": limit,
+                "raw_count": merged["raw_count"],
+                "date_filtered_count": merged["date_filtered_count"],
+                "ticker_filtered_count": merged["ticker_filtered_count"],
+                "topic_filtered_count": merged["topic_filtered_count"],
+                "final_count": final_count,
+                "stages": stages,
+            }
+        )
 
     def get_news(
         self,
@@ -424,45 +497,74 @@ class FMPAPI:
         - FMP articles fallback
         """
         max_items = limit or 10
+        stages: List[Dict[str, Any]] = []
 
         if ticker and not topic:
             try:
+                stock_path = "/stable/news/stock"
                 rows = self._request_json(
-                    "/stable/news/stock",
+                    stock_path,
                     {
                         "symbols": ticker,
                         "limit": max_items,
                     },
                 )
                 if isinstance(rows, list):
-                    results = self._collect_matching_news(
+                    results, counts = self._collect_matching_news(
                         rows,
                         trading_date=trading_date,
                         limit=max_items,
                     )
+                    stages.append(self._diagnostic_stage(stock_path, rows, counts))
                     if results:
+                        self._record_news_diagnostic(
+                            ticker=ticker,
+                            topic=topic,
+                            trading_date=trading_date,
+                            limit=max_items,
+                            stages=stages,
+                            final_count=len(results[:max_items]),
+                        )
                         return results[:max_items]
             except PermissionError:
                 pass
 
         general_rows = self._fetch_general_news(pages=3, limit=50)
-        general_results = self._collect_matching_news(
+        general_results, general_counts = self._collect_matching_news(
             general_rows,
             trading_date=trading_date,
             limit=max_items,
             ticker=ticker,
             topic=topic,
         )
+        stages.append(self._diagnostic_stage("/stable/news/general-latest", general_rows, general_counts))
         if general_results:
+            self._record_news_diagnostic(
+                ticker=ticker,
+                topic=topic,
+                trading_date=trading_date,
+                limit=max_items,
+                stages=stages,
+                final_count=len(general_results[:max_items]),
+            )
             return general_results[:max_items]
 
         article_rows = self._fetch_fmp_articles(pages=3, limit=50)
-        article_results = self._collect_matching_news(
+        article_results, article_counts = self._collect_matching_news(
             article_rows,
             trading_date=trading_date,
             limit=max_items,
             ticker=ticker,
             topic=topic,
+        )
+        stages.append(self._diagnostic_stage("/stable/fmp-articles", article_rows, article_counts))
+        self._record_news_diagnostic(
+            ticker=ticker,
+            topic=topic,
+            trading_date=trading_date,
+            limit=max_items,
+            stages=stages,
+            final_count=len(article_results[:max_items]),
         )
         return article_results[:max_items]
 

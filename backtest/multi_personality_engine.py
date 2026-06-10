@@ -36,6 +36,7 @@ from backtest.engine import BacktestEngine, BacktestResult, create_backtest_engi
 from backtest.workflow_adapter import SharedPhase1Artifact, create_workflow_adapter
 from backtest.report import ReportGenerator
 from backtest.report_metric_fallbacks import enrich_behavior_metrics
+from quantarena.news_diagnostics import drain_news_diagnostics
 from quantarena.report_artifacts import RunReportArtifacts, load_run_report_artifacts
 
 
@@ -1107,6 +1108,10 @@ class MultiPersonalityBacktest(BaseBacktestEngine):
         # 3. CSV 汇总
         self._generate_csv_summary(report_dir)
 
+        # 4. Machine-readable diagnostics
+        self._generate_daily_decisions_jsonl(report_dir)
+        self._generate_news_diagnostics_jsonl(report_dir)
+
         logger.info(f"Comparison reports saved to: {report_dir}")
 
     def _generate_markdown_report(self, report_dir: Path):
@@ -1407,6 +1412,7 @@ class MultiPersonalityBacktest(BaseBacktestEngine):
 
         data = {
             "run_id": self.comparison.run_id,
+            "artifact_schema_version": 2,
             "config": {
                 "tickers": self.comparison.tickers,
                 "start_date": self.comparison.start_date,
@@ -1424,6 +1430,100 @@ class MultiPersonalityBacktest(BaseBacktestEngine):
         json_path = report_dir / "comparison_data.json"
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+
+    @staticmethod
+    def _normalize_decision_record(
+        *,
+        date: str,
+        personality: str,
+        ticker: str,
+        decision: Any,
+    ) -> Dict[str, Any]:
+        """Return a JSON-safe, stable decision record for report artifacts."""
+        if hasattr(decision, "__dict__") and not isinstance(decision, dict):
+            raw_decision = dict(decision.__dict__)
+        elif isinstance(decision, dict):
+            raw_decision = dict(decision)
+        else:
+            raw_decision = {"value": decision}
+
+        metadata = {
+            key: value
+            for key, value in raw_decision.items()
+            if isinstance(key, str) and key.startswith("_")
+        }
+        record = {
+            "date": date,
+            "personality": personality,
+            "ticker": ticker,
+            "action": raw_decision.get("action"),
+            "shares": raw_decision.get("shares"),
+            "price": raw_decision.get("price"),
+            "justification": raw_decision.get("justification"),
+            "applied": raw_decision.get("_applied"),
+            "risk_reasons": raw_decision.get("_risk_reasons", []),
+            "metadata": metadata,
+        }
+        extra = {
+            key: value
+            for key, value in raw_decision.items()
+            if key not in {"action", "shares", "price", "justification", "_applied", "_risk_reasons"}
+            and not (isinstance(key, str) and key.startswith("_"))
+        }
+        if extra:
+            record["extra"] = extra
+        return ReportGenerator._json_safe(record)
+
+    def _iter_daily_decision_records(self) -> List[Dict[str, Any]]:
+        records: List[Dict[str, Any]] = []
+        for date in sorted(self.comparison.daily_decisions):
+            by_personality = self.comparison.daily_decisions.get(date) or {}
+            for personality in sorted(by_personality):
+                decisions = by_personality.get(personality) or {}
+                if not isinstance(decisions, dict):
+                    records.append(
+                        ReportGenerator._json_safe(
+                            {
+                                "date": date,
+                                "personality": personality,
+                                "ticker": None,
+                                "action": None,
+                                "shares": None,
+                                "price": None,
+                                "justification": None,
+                                "applied": None,
+                                "risk_reasons": [],
+                                "metadata": {},
+                                "extra": {"value": decisions},
+                            }
+                        )
+                    )
+                    continue
+                for ticker in sorted(decisions):
+                    records.append(
+                        self._normalize_decision_record(
+                            date=date,
+                            personality=personality,
+                            ticker=ticker,
+                            decision=decisions[ticker],
+                        )
+                    )
+        return records
+
+    def _generate_daily_decisions_jsonl(self, report_dir: Path) -> None:
+        """Export per-date/personality/ticker decisions as JSONL."""
+        path = report_dir / "daily_decisions.jsonl"
+        with path.open("w", encoding="utf-8") as handle:
+            for record in self._iter_daily_decision_records():
+                handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+    def _generate_news_diagnostics_jsonl(self, report_dir: Path) -> None:
+        """Export count-only company-news provider diagnostics as JSONL."""
+        path = report_dir / "news_diagnostics.jsonl"
+        records = [ReportGenerator._json_safe(record) for record in drain_news_diagnostics()]
+        with path.open("w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
 
     def _generate_csv_summary(self, report_dir: Path):
         """生成 CSV 汇总"""
