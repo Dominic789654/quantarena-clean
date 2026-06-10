@@ -56,7 +56,13 @@ def test_run_fixed_benchmark_both_writes_summary_and_dashboards(tmp_path: Path):
         calls.append(list(command))
         mode = "llm" if "--use-llm" in command else "simple"
         run_id = f"{mode}_run"
-        _write_report(reports_root / run_id, run_id=run_id, total_return=1.2 if mode == "simple" else -0.4)
+        _write_report(
+            reports_root / run_id,
+            run_id=run_id,
+            total_return=1.2 if mode == "simple" else -0.4,
+            benchmark_source="index:^GSPC" if mode == "simple" else "equal_weight_basket",
+            benchmark_diagnostics=mode == "simple",
+        )
         return subprocess.CompletedProcess(
             args=command,
             returncode=0,
@@ -95,6 +101,10 @@ def test_run_fixed_benchmark_both_writes_summary_and_dashboards(tmp_path: Path):
     assert payload["config"]["tickers"] == ["AAPL", "MSFT", "NVDA"]
     assert payload["runs"][0]["metrics"]["total_return"] == 1.2
     assert payload["runs"][1]["dashboard_path"].endswith("dashboard.html")
+    assert payload["runs"][0]["benchmark_source"] == "index:^GSPC"
+    assert payload["runs"][0]["benchmark_diagnostics_path"].endswith("benchmark_diagnostics.jsonl")
+    assert payload["runs"][1]["benchmark_source"] == "equal_weight_basket"
+    assert payload["runs"][1]["benchmark_diagnostics_path"] is None
 
 
 def test_run_fixed_benchmark_keeps_success_when_later_mode_fails(tmp_path: Path):
@@ -156,7 +166,14 @@ def test_run_fixed_benchmark_reports_missing_report_directory(tmp_path: Path):
     assert "could not discover report directory" in (result.runs[0].error or "")
 
 
-def _write_report(root: Path, *, run_id: str, total_return: float = 1.0) -> None:
+def _write_report(
+    root: Path,
+    *,
+    run_id: str,
+    total_return: float = 1.0,
+    benchmark_source: str | None = None,
+    benchmark_diagnostics: bool = False,
+) -> None:
     root.mkdir(parents=True)
     (root / "metrics.json").write_text(
         json.dumps(
@@ -172,6 +189,7 @@ def _write_report(root: Path, *, run_id: str, total_return: float = 1.0) -> None
                     "max_drawdown": 0.1,
                     "sharpe_ratio": 1.0,
                     "total_trades": 1,
+                    "benchmark_source": benchmark_source,
                 },
             }
         ),
@@ -185,3 +203,15 @@ def _write_report(root: Path, *, run_id: str, total_return: float = 1.0) -> None
         "date,ticker,action,shares,price,value\n2026-06-01,AAPL,BUY,1,300,300\n",
         encoding="utf-8",
     )
+    if benchmark_diagnostics:
+        (root / "benchmark_diagnostics.jsonl").write_text(
+            json.dumps(
+                {
+                    "index_code": "^GSPC",
+                    "provider": "cache",
+                    "status": "hit",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )

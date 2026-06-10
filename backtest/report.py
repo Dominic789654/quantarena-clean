@@ -34,6 +34,13 @@ try:
 except ImportError:
     DEEPEAR_STATS_AVAILABLE = False
 
+try:
+    from quantarena.benchmark_diagnostics import drain_benchmark_diagnostics
+    BENCHMARK_DIAGNOSTICS_AVAILABLE = True
+except ImportError:
+    drain_benchmark_diagnostics = None
+    BENCHMARK_DIAGNOSTICS_AVAILABLE = False
+
 
 class ReportGenerator:
     """
@@ -1082,6 +1089,27 @@ class ReportGenerator:
 
         return jsonl_str
 
+    def generate_benchmark_diagnostics_jsonl(self, output_path: Optional[str] = None) -> str:
+        """Generate benchmark provider diagnostics JSONL."""
+        records = []
+        if BENCHMARK_DIAGNOSTICS_AVAILABLE and drain_benchmark_diagnostics is not None:
+            records = [self._json_safe(record) for record in drain_benchmark_diagnostics()]
+        lines = [
+            json.dumps(record, allow_nan=False, default=str, sort_keys=True)
+            for record in records
+        ]
+        jsonl_str = "\n".join(lines)
+        if lines:
+            jsonl_str += "\n"
+
+        if output_path and lines:
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(jsonl_str)
+            logger.info(f"Benchmark diagnostics JSONL saved to {output_path}")
+
+        return jsonl_str
+
     def generate_fof_allocations_json(
         self,
         result,  # BacktestResult
@@ -1363,6 +1391,7 @@ class ReportGenerator:
             "equity_curve_csv": str(run_dir / "equity_curve.csv"),
             "broker_audit_jsonl": str(run_dir / "broker_audit.jsonl"),
         }
+        benchmark_diagnostics_path = str(run_dir / "benchmark_diagnostics.jsonl")
 
         fof_allocations = (getattr(result, "config", {}) or {}).get("fof", {}).get("daily_allocations", [])
         if fof_allocations:
@@ -1376,6 +1405,9 @@ class ReportGenerator:
         self.generate_metrics_json(result, paths["metrics_json"])
         self.generate_equity_curve_csv(result, paths["equity_curve_csv"])
         self.generate_broker_audit_jsonl(result, paths["broker_audit_jsonl"])
+        benchmark_diagnostics = self.generate_benchmark_diagnostics_jsonl(benchmark_diagnostics_path)
+        if benchmark_diagnostics:
+            paths["benchmark_diagnostics_jsonl"] = benchmark_diagnostics_path
         if "fof_allocations_json" in paths:
             self.generate_fof_allocations_json(result, paths["fof_allocations_json"])
             self.generate_fof_allocations_csv(result, paths["fof_allocations_csv"])

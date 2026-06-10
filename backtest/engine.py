@@ -21,6 +21,7 @@ from shared.utils.run_id import generate_run_id
 setup_paths()
 
 from backtest.base_engine import BaseBacktestEngine
+from backtest.benchmark_cache import BenchmarkPriceCache
 from backtest.behavior_metrics import compute_behavior_metrics
 from backtest.execution import (
     convert_targets_to_trades,
@@ -32,6 +33,7 @@ from backtest.mandate_interface import allocate_with_mandate
 from backtest.portfolio_tracker import Trade, PortfolioTracker
 from backtest.metrics import PerformanceMetrics
 from backtest.workflow_adapter import BacktestWorkflowAdapter, create_workflow_adapter
+from quantarena.benchmark_diagnostics import record_benchmark_diagnostic
 
 # Portfolio allocator for multi-stock allocation (B1 scheme)
 try:
@@ -388,12 +390,53 @@ class BacktestEngine(BaseBacktestEngine):
         if self.benchmark_mode in {"auto", "index", "equal_weight"}:
             basket_curve = self._build_equal_weight_benchmark_curve(trading_days)
             if not basket_curve.empty:
+                if self.benchmark_mode in {"auto", "index"} and self.benchmark_index_code:
+                    record_benchmark_diagnostic(
+                        {
+                            "index_code": self.benchmark_index_code,
+                            "start_date": trading_days[0],
+                            "end_date": trading_days[-1],
+                            "provider": "equal_weight_basket",
+                            "status": "fallback",
+                            "fallback_source": "equal_weight_basket",
+                            "reason": "index_benchmark_unavailable",
+                            "benchmark_source": "equal_weight_basket",
+                        }
+                    )
                 return basket_curve, "equal_weight_basket"
 
         return pd.Series(dtype=float), "unavailable"
 
     def _build_us_index_benchmark_curve(self, trading_days: List[str], index_code: str) -> pd.Series:
         """Build benchmark curve from US index or ETF daily close prices via yfinance."""
+        cache = BenchmarkPriceCache()
+        cached_close = cache.load_covering(index_code, trading_days)
+        if not cached_close.empty:
+            record_benchmark_diagnostic(
+                {
+                    "index_code": index_code,
+                    "start_date": trading_days[0],
+                    "end_date": trading_days[-1],
+                    "provider": "cache",
+                    "status": "hit",
+                    "row_count": int(len(cached_close)),
+                    "benchmark_source": f"index:{index_code}",
+                }
+            )
+            return self._benchmark_curve_from_close(cached_close)
+
+        record_benchmark_diagnostic(
+            {
+                "index_code": index_code,
+                "start_date": trading_days[0],
+                "end_date": trading_days[-1],
+                "provider": "cache",
+                "status": "miss",
+                "row_count": 0,
+                "benchmark_source": f"index:{index_code}",
+            }
+        )
+
         try:
             import importlib
             yf = importlib.import_module("yfinance")
@@ -408,6 +451,17 @@ class BacktestEngine(BaseBacktestEngine):
                 auto_adjust=False,
             )
             if raw_df is None or raw_df.empty:
+                record_benchmark_diagnostic(
+                    {
+                        "index_code": index_code,
+                        "start_date": trading_days[0],
+                        "end_date": trading_days[-1],
+                        "provider": "yfinance",
+                        "status": "empty",
+                        "row_count": 0,
+                        "fallback_source": "equal_weight_basket",
+                    }
+                )
                 return pd.Series(dtype=float)
 
             if isinstance(raw_df.columns, pd.MultiIndex) and "Adj Close" in raw_df.columns.get_level_values(0):
@@ -431,6 +485,18 @@ class BacktestEngine(BaseBacktestEngine):
             elif "close" in raw_df.columns:
                 close_series = raw_df["close"].copy()
             else:
+                record_benchmark_diagnostic(
+                    {
+                        "index_code": index_code,
+                        "start_date": trading_days[0],
+                        "end_date": trading_days[-1],
+                        "provider": "yfinance",
+                        "status": "empty",
+                        "row_count": int(len(raw_df)),
+                        "fallback_source": "equal_weight_basket",
+                        "reason": "missing_close_column",
+                    }
+                )
                 return pd.Series(dtype=float)
 
             close_series.index = pd.to_datetime(close_series.index)
@@ -440,17 +506,72 @@ class BacktestEngine(BaseBacktestEngine):
             if aligned_close.isna().any():
                 aligned_close = aligned_close.dropna()
             if len(aligned_close) != len(target_index):
+                record_benchmark_diagnostic(
+                    {
+                        "index_code": index_code,
+                        "start_date": trading_days[0],
+                        "end_date": trading_days[-1],
+                        "provider": "yfinance",
+                        "status": "empty",
+                        "row_count": int(len(close_series)),
+                        "fallback_source": "equal_weight_basket",
+                        "reason": "insufficient_coverage",
+                    }
+                )
                 return pd.Series(dtype=float)
             if aligned_close.empty or aligned_close.iloc[0] <= 0:
+                record_benchmark_diagnostic(
+                    {
+                        "index_code": index_code,
+                        "start_date": trading_days[0],
+                        "end_date": trading_days[-1],
+                        "provider": "yfinance",
+                        "status": "empty",
+                        "row_count": int(len(aligned_close)),
+                        "fallback_source": "equal_weight_basket",
+                        "reason": "invalid_start_close",
+                    }
+                )
                 return pd.Series(dtype=float)
 
-            benchmark_curve = self.initial_cash * (aligned_close / aligned_close.iloc[0])
-            benchmark_curve.name = "benchmark_value"
-            benchmark_curve.index.name = "date"
-            return benchmark_curve
+            cache_path = cache.save(index_code, aligned_close)
+            record_benchmark_diagnostic(
+                {
+                    "index_code": index_code,
+                    "start_date": trading_days[0],
+                    "end_date": trading_days[-1],
+                    "provider": "yfinance",
+                    "status": "ok",
+                    "row_count": int(len(aligned_close)),
+                    "cache_path": str(cache_path) if cache_path else None,
+                    "benchmark_source": f"index:{index_code}",
+                }
+            )
+            return self._benchmark_curve_from_close(aligned_close)
         except Exception as exc:
             logger.warning(f"Failed to build US index benchmark ({index_code}): {exc}")
+            record_benchmark_diagnostic(
+                {
+                    "index_code": index_code,
+                    "start_date": trading_days[0] if trading_days else None,
+                    "end_date": trading_days[-1] if trading_days else None,
+                    "provider": "yfinance",
+                    "status": "error",
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                    "fallback_source": "equal_weight_basket",
+                }
+            )
             return pd.Series(dtype=float)
+
+    def _benchmark_curve_from_close(self, close_series: pd.Series) -> pd.Series:
+        """Convert aligned close prices into a benchmark value curve."""
+        if close_series.empty or close_series.iloc[0] <= 0:
+            return pd.Series(dtype=float)
+        benchmark_curve = self.initial_cash * (close_series / close_series.iloc[0])
+        benchmark_curve.name = "benchmark_value"
+        benchmark_curve.index.name = "date"
+        return benchmark_curve
 
     def _build_cn_index_benchmark_curve(self, trading_days: List[str], index_code: str) -> pd.Series:
         """Build benchmark curve from CN index daily close prices."""

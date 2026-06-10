@@ -74,6 +74,8 @@ class FixedBenchmarkRun:
     run_id: str | None = None
     report_dir: Path | None = None
     dashboard_path: Path | None = None
+    benchmark_source: str | None = None
+    benchmark_diagnostics_path: Path | None = None
     metrics: dict[str, Any] = field(default_factory=dict)
     stdout: str = ""
     stderr: str = ""
@@ -88,6 +90,8 @@ class FixedBenchmarkRun:
             "run_id": self.run_id,
             "report_dir": str(self.report_dir) if self.report_dir else None,
             "dashboard_path": str(self.dashboard_path) if self.dashboard_path else None,
+            "benchmark_source": self.benchmark_source,
+            "benchmark_diagnostics_path": str(self.benchmark_diagnostics_path) if self.benchmark_diagnostics_path else None,
             "metrics": self.metrics,
             "stdout": self.stdout,
             "stderr": self.stderr,
@@ -311,6 +315,7 @@ def _run_mode(
         dashboard_error = f"dashboard generation failed: {errors}"
 
     artifacts = load_run_report_artifacts(report_dir)
+    benchmark_diagnostics_path = report_dir / "benchmark_diagnostics.jsonl"
     return FixedBenchmarkRun(
         mode=mode,
         ok=dashboard_ok and artifacts.ok,
@@ -319,6 +324,8 @@ def _run_mode(
         run_id=run_id or artifacts.run_id,
         report_dir=report_dir,
         dashboard_path=dashboard_path if dashboard_ok else None,
+        benchmark_source=_benchmark_source_from_metrics(artifacts.metrics),
+        benchmark_diagnostics_path=benchmark_diagnostics_path if benchmark_diagnostics_path.exists() else None,
         metrics=dict(artifacts.metrics),
         stdout=stdout,
         stderr=stderr,
@@ -372,6 +379,11 @@ def _last_error_text(*, stdout: str, stderr: str) -> str | None:
         if line.upper().startswith("ERROR") or "Traceback" in line:
             return line
     return lines[-1] if lines else None
+
+
+def _benchmark_source_from_metrics(metrics: Mapping[str, Any]) -> str | None:
+    source = metrics.get("benchmark_source") if isinstance(metrics, Mapping) else None
+    return str(source) if source else None
 
 
 def _format_float_arg(value: float) -> str:

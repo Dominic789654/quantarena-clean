@@ -148,6 +148,29 @@ def test_cli_parser_exposes_provider_smoke_subcommand():
     assert args.json is True
 
 
+def test_cli_parser_exposes_news_replay_fixture_builder_subcommand():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "provider",
+            "build-news-replay-fixture",
+            "--input",
+            "raw.json",
+            "--output",
+            "fixture.jsonl",
+            "--skip-invalid",
+            "--json",
+        ]
+    )
+
+    assert args.command == "provider"
+    assert args.provider_command == "build-news-replay-fixture"
+    assert str(args.input) == "raw.json"
+    assert str(args.output) == "fixture.jsonl"
+    assert args.skip_invalid is True
+    assert args.json is True
+
+
 def test_cli_parser_rejects_yfinance_provider_smoke():
     parser = build_parser()
 
@@ -241,6 +264,64 @@ def test_provider_smoke_command_fails_on_invalid_date(monkeypatch, capsys):
     assert exit_code == 1
     assert payload["ok"] is False
     assert payload["reason"] == "date must use YYYY-MM-DD format"
+
+
+def test_news_replay_fixture_builder_command_outputs_json(tmp_path, capsys):
+    source = tmp_path / "raw.jsonl"
+    output = tmp_path / "fixture.jsonl"
+    source.write_text(
+        json.dumps({"symbol": "AAPL", "headline": "fixture row", "publishedDate": "2026-06-01"}) + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "provider",
+            "build-news-replay-fixture",
+            "--input",
+            str(source),
+            "--output",
+            str(output),
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["ok"] is True
+    assert payload["output_rows"] == 1
+    assert payload["tickers"] == ["AAPL"]
+    assert output.exists()
+
+
+def test_news_replay_fixture_builder_command_reports_errors(tmp_path, capsys):
+    source = tmp_path / "raw.jsonl"
+    output = tmp_path / "fixture.jsonl"
+    source.write_text(
+        json.dumps({"symbol": "AAPL", "headline": "bad", "publishedDate": "not-a-date"}) + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "provider",
+            "build-news-replay-fixture",
+            "--input",
+            str(source),
+            "--output",
+            str(output),
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 1
+    assert payload["ok"] is False
+    assert "invalid news row" in payload["error"]
 
 
 def test_artifact_validate_reports_missing_bundle(capsys):

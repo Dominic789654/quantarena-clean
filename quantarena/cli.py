@@ -169,6 +169,32 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print machine-readable smoke-check output",
     )
+    provider_fixture_parser = provider_subparsers.add_parser(
+        "build-news-replay-fixture",
+        help="Normalize local news exports into a replay news JSONL fixture",
+    )
+    provider_fixture_parser.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        help="Local JSON, JSONL, or CSV news export",
+    )
+    provider_fixture_parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="Replay fixture JSONL output path",
+    )
+    provider_fixture_parser.add_argument(
+        "--skip-invalid",
+        action="store_true",
+        help="Skip invalid rows instead of failing the build",
+    )
+    provider_fixture_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable fixture build output",
+    )
 
     live_parser = subparsers.add_parser(
         "live",
@@ -326,6 +352,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             as_json=args.json,
         )
 
+    if args.command == "provider" and args.provider_command == "build-news-replay-fixture":
+        return run_news_replay_fixture_builder(
+            input_path=args.input,
+            output_path=args.output,
+            skip_invalid=args.skip_invalid,
+            as_json=args.json,
+        )
+
     if args.command == "live":
         return run_live_command(args)
 
@@ -473,6 +507,53 @@ def run_provider_smoke(
             print(f"reason: {result.reason}")
 
     return 0 if result.ok else 1
+
+
+def run_news_replay_fixture_builder(
+    *,
+    input_path: Path,
+    output_path: Path,
+    skip_invalid: bool = False,
+    as_json: bool = False,
+) -> int:
+    """Build a local replay-news fixture from an archived export."""
+    from quantarena.news_replay_fixture_builder import (
+        NewsReplayFixtureBuildError,
+        build_news_replay_fixture,
+    )
+
+    try:
+        result = build_news_replay_fixture(
+            input_path=input_path,
+            output_path=output_path,
+            skip_invalid=skip_invalid,
+        )
+        payload = result.to_dict()
+    except NewsReplayFixtureBuildError as exc:
+        payload = {
+            "ok": False,
+            "input_path": str(input_path),
+            "output_path": str(output_path),
+            "error": str(exc),
+        }
+        if as_json:
+            print(json.dumps(payload, sort_keys=True))
+        else:
+            print("QuantArena news replay fixture build failed", file=sys.stderr)
+            print(f"error: {payload['error']}", file=sys.stderr)
+        return 1
+
+    if as_json:
+        print(json.dumps(payload, sort_keys=True))
+    else:
+        print("QuantArena news replay fixture built")
+        print(f"input: {payload['input_path']}")
+        print(f"output: {payload['output_path']}")
+        print(f"rows: {payload['output_rows']}/{payload['input_rows']}")
+        print(f"invalid_rows: {payload['invalid_rows']}")
+        print(f"tickers: {', '.join(payload['tickers'])}")
+
+    return 0
 
 
 def run_paper_command(args: argparse.Namespace) -> int:
