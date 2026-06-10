@@ -31,6 +31,15 @@ def test_simple_summary_matches_regression_baseline(tmp_path: Path):
 
     assert result.ok is True
     assert result.findings == ()
+    assert result.checked_summary["required_modes"] == ["simple"]
+    assert result.checked_summary["evaluated_modes"] == ["simple"]
+    assert result.checked_summary["modes"]["simple"]["metric_checks"] == 5
+    assert result.checked_summary["modes"]["simple"]["required_paths"] == [
+        "report_dir",
+        "dashboard_path",
+    ]
+    assert result.checked_summary["log_issue_count"] == 0
+    assert result.log_issues == ()
 
 
 def test_metric_drift_fails_with_structured_finding(tmp_path: Path):
@@ -77,6 +86,13 @@ def test_multi_summary_validates_personalities_and_diagnostics(tmp_path: Path):
 
     assert result.ok is True
     assert result.findings == ()
+    checked = result.checked_summary["modes"]["multi"]
+    assert checked["required_personalities"] == PERSONALITIES
+    assert checked["personality_metric_checks"] == 5
+    assert checked["diagnostics_checks"] == [
+        "news_diagnostics_nonzero",
+        "benchmark_cache_hit",
+    ]
 
 
 def test_multi_summary_fails_missing_benchmark_cache_hit(tmp_path: Path):
@@ -125,13 +141,58 @@ def test_cli_can_run_benchmark_then_evaluate(monkeypatch, tmp_path: Path, capsys
     assert exit_code == 0
     assert output["ok"] is True
     assert output["profile"] == "simple"
+    assert output["checked_summary"]["evaluated_modes"] == ["simple"]
 
 
-def _write_simple_summary(tmp_path: Path, *, total_return: float = -0.18) -> Path:
+def test_gate_extracts_bounded_log_issues(tmp_path: Path):
+    summary_path = _write_simple_summary(tmp_path, stderr_lines=["INFO ok", "UserWarning: noisy"])
+
+    result = evaluate_fixed_backtest_summary(
+        summary_path=summary_path,
+        baseline_path=BASELINE,
+        profile="simple",
+    )
+
+    assert result.ok is True
+    assert result.checked_summary["log_issue_count"] == 1
+    assert result.log_issues[0].mode == "simple"
+    assert result.log_issues[0].stream == "stderr"
+    assert result.log_issues[0].severity == "warning"
+    assert result.log_issues[0].line_number == 2
+    assert "UserWarning" in result.log_issues[0].message
+
+
+def test_gate_does_not_flag_tracking_error_metric_text(tmp_path: Path):
+    summary_path = _write_simple_summary(
+        tmp_path,
+        stderr_lines=["INFO Smart Beta tracking error: 0.0035"],
+    )
+
+    result = evaluate_fixed_backtest_summary(
+        summary_path=summary_path,
+        baseline_path=BASELINE,
+        profile="simple",
+    )
+
+    assert result.ok is True
+    assert result.checked_summary["log_issue_count"] == 0
+    assert result.log_issues == ()
+
+
+def _write_simple_summary(
+    tmp_path: Path,
+    *,
+    total_return: float = -0.18,
+    stderr_lines: list[str] | None = None,
+) -> Path:
     report_dir = tmp_path / "simple_run"
     report_dir.mkdir()
     dashboard_path = report_dir / "dashboard.html"
     dashboard_path.write_text("<html></html>", encoding="utf-8")
+    stdout_log_path = tmp_path / "simple-stdout.log"
+    stderr_log_path = tmp_path / "simple-stderr.log"
+    stdout_log_path.write_text("Run ID: simple_run\n", encoding="utf-8")
+    stderr_log_path.write_text("\n".join(stderr_lines or []), encoding="utf-8")
     summary_path = tmp_path / "summary.json"
     summary_path.write_text(
         json.dumps(
@@ -145,6 +206,8 @@ def _write_simple_summary(tmp_path: Path, *, total_return: float = -0.18) -> Pat
                         "report_dir": str(report_dir),
                         "dashboard_path": str(dashboard_path),
                         "benchmark_source": "equal_weight_basket",
+                        "stdout_log_path": str(stdout_log_path),
+                        "stderr_log_path": str(stderr_log_path),
                         "metrics": {
                             "total_return": total_return,
                             "final_value": 9981.77,

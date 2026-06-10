@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +24,11 @@ from quantarena.fixed_backtest_benchmark import (
 DEFAULT_BASELINE_PATH = Path(
     "tests/fixtures/fixed_backtest_data/fixed_backtest_regression_baseline.json"
 )
+DEFAULT_LOG_ISSUE_LIMIT_PER_STREAM = 20
+LOG_WARNING_RE = re.compile(
+    r"\b(?:WARNING|WARN|Warning|UserWarning|DeprecationWarning|RuntimeWarning)\b"
+)
+LOG_ERROR_RE = re.compile(r"\b(?:ERROR|CRITICAL|Traceback)\b")
 
 
 @dataclass(frozen=True)
@@ -50,6 +56,28 @@ class FixedBacktestGateFinding:
 
 
 @dataclass(frozen=True)
+class FixedBacktestGateLogIssue:
+    """One warning/error line extracted from a fixed benchmark child log."""
+
+    mode: str
+    stream: str
+    path: Path
+    line_number: int
+    severity: str
+    message: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "stream": self.stream,
+            "path": str(self.path),
+            "line_number": self.line_number,
+            "severity": self.severity,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
 class FixedBacktestGateResult:
     """Regression gate result for a fixed benchmark summary."""
 
@@ -58,6 +86,8 @@ class FixedBacktestGateResult:
     baseline_path: Path
     profile: str
     findings: tuple[FixedBacktestGateFinding, ...] = field(default_factory=tuple)
+    checked_summary: dict[str, Any] = field(default_factory=dict)
+    log_issues: tuple[FixedBacktestGateLogIssue, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -66,6 +96,8 @@ class FixedBacktestGateResult:
             "baseline_path": str(self.baseline_path),
             "profile": self.profile,
             "findings": [finding.to_dict() for finding in self.findings],
+            "checked_summary": self.checked_summary,
+            "log_issues": [issue.to_dict() for issue in self.log_issues],
         }
 
 
@@ -200,6 +232,8 @@ def evaluate_fixed_backtest_summary(
     )
 
     findings: list[FixedBacktestGateFinding] = []
+    checked_modes: dict[str, dict[str, Any]] = {}
+    log_issues: list[FixedBacktestGateLogIssue] = []
     runs_by_mode = _runs_by_mode(summary)
     mode_expectations = _mapping(baseline.get("modes"))
     required_modes = baseline.get("required_modes") or list(mode_expectations)
@@ -216,6 +250,18 @@ def evaluate_fixed_backtest_summary(
                 )
             )
             continue
+        checked_modes[mode_name] = _build_checked_mode_summary(
+            mode=mode_name,
+            run=run,
+            expectation=_mapping(mode_expectations.get(mode_name)),
+        )
+        log_issues.extend(
+            _extract_run_log_issues(
+                mode=mode_name,
+                run=run,
+                summary_path=summary_path,
+            )
+        )
         _evaluate_mode(
             mode=mode_name,
             run=run,
@@ -230,6 +276,13 @@ def evaluate_fixed_backtest_summary(
         baseline_path=baseline_path,
         profile=profile_name,
         findings=tuple(findings),
+        checked_summary={
+            "required_modes": [str(mode) for mode in required_modes],
+            "evaluated_modes": sorted(checked_modes),
+            "modes": checked_modes,
+            "log_issue_count": len(log_issues),
+        },
+        log_issues=tuple(log_issues),
     )
 
 
@@ -312,6 +365,44 @@ def _evaluate_mode(
         summary_path=summary_path,
         findings=findings,
     )
+
+
+def _build_checked_mode_summary(
+    *,
+    mode: str,
+    run: Mapping[str, Any],
+    expectation: Mapping[str, Any],
+) -> dict[str, Any]:
+    diagnostics_checks: list[str] = []
+    if _mapping(expectation.get("news_diagnostics")).get("require_nonzero_final_count"):
+        diagnostics_checks.append("news_diagnostics_nonzero")
+    if _mapping(expectation.get("benchmark_diagnostics")).get("cache_hits"):
+        diagnostics_checks.append("benchmark_cache_hit")
+
+    return {
+        "mode": mode,
+        "run_present": True,
+        "run_ok": bool(run.get("ok")),
+        "metric_checks": len(_mapping(expectation.get("metrics"))),
+        "required_paths": [str(item) for item in expectation.get("required_paths", [])],
+        "required_personalities": [
+            str(item) for item in expectation.get("required_personalities", [])
+        ],
+        "personality_metric_checks": _count_personality_metric_checks(expectation),
+        "diagnostics_checks": diagnostics_checks,
+        "stdout_log_path": run.get("stdout_log_path"),
+        "stderr_log_path": run.get("stderr_log_path"),
+    }
+
+
+def _count_personality_metric_checks(expectation: Mapping[str, Any]) -> int:
+    required_personality_count = len(expectation.get("required_personalities", []))
+    metric_expectations = _mapping(expectation.get("personality_metrics"))
+    total = 0
+    for personality_key, raw_fields in metric_expectations.items():
+        multiplier = required_personality_count if str(personality_key) == "*" else 1
+        total += multiplier * len(_mapping(raw_fields))
+    return total
 
 
 def _evaluate_metric_expectations(
@@ -596,6 +687,71 @@ def _diagnostic_paths(run: Mapping[str, Any], artifact_prefix: str) -> list[Any]
     return [single_path] if single_path else []
 
 
+def _extract_run_log_issues(
+    *,
+    mode: str,
+    run: Mapping[str, Any],
+    summary_path: Path,
+    limit_per_stream: int = DEFAULT_LOG_ISSUE_LIMIT_PER_STREAM,
+) -> list[FixedBacktestGateLogIssue]:
+    issues: list[FixedBacktestGateLogIssue] = []
+    for stream, field_name in (("stdout", "stdout_log_path"), ("stderr", "stderr_log_path")):
+        raw_path = run.get(field_name)
+        if not raw_path:
+            continue
+        path = _resolve_artifact_path(raw_path=raw_path, summary_path=summary_path)
+        if not path.is_file():
+            continue
+        issues.extend(
+            _extract_log_issues_from_file(
+                mode=mode,
+                stream=stream,
+                path=path,
+                limit=limit_per_stream,
+            )
+        )
+    return issues
+
+
+def _extract_log_issues_from_file(
+    *,
+    mode: str,
+    stream: str,
+    path: Path,
+    limit: int,
+) -> list[FixedBacktestGateLogIssue]:
+    issues: list[FixedBacktestGateLogIssue] = []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return issues
+    for line_number, line in enumerate(lines, start=1):
+        if len(issues) >= limit:
+            break
+        severity = _classify_log_issue(line)
+        if not severity:
+            continue
+        issues.append(
+            FixedBacktestGateLogIssue(
+                mode=mode,
+                stream=stream,
+                path=path,
+                line_number=line_number,
+                severity=severity,
+                message=line.strip(),
+            )
+        )
+    return issues
+
+
+def _classify_log_issue(line: str) -> str | None:
+    if LOG_ERROR_RE.search(line):
+        return "error"
+    if LOG_WARNING_RE.search(line):
+        return "warning"
+    return None
+
+
 def _read_jsonl_artifact_records(
     *,
     raw_paths: Sequence[Any],
@@ -700,10 +856,20 @@ def _print_human_result(result: FixedBacktestGateResult) -> None:
     print(f"baseline: {result.baseline_path}")
     print(f"profile: {result.profile}")
     print(f"ok: {result.ok}")
+    checked = result.checked_summary
+    if checked:
+        evaluated_modes = ", ".join(checked.get("evaluated_modes", []))
+        print(f"evaluated_modes: {evaluated_modes}")
+        print(f"log_issues: {checked.get('log_issue_count', 0)}")
     for finding in result.findings:
         location = f" {finding.path}" if finding.path else ""
         mode = f"[{finding.mode}] " if finding.mode else ""
         print(f"- {mode}{finding.check}{location}: {finding.message}")
+    for issue in result.log_issues:
+        print(
+            f"- [{issue.mode}] {issue.stream} {issue.severity} "
+            f"{issue.path}:{issue.line_number}: {issue.message}"
+        )
 
 
 if __name__ == "__main__":
