@@ -282,7 +282,8 @@ class SmartBetaBacktestEngine(BacktestEngine):
                         "action": td["action"].upper(),
                         "shares": td["shares"],
                         "price": td["price"],
-                        "justification": f"Smart Beta allocation. Target weight: {td['target_weight']:.2%}"
+                        "justification": f"Smart Beta allocation. Target weight: {td['target_weight']:.2%}",
+                        "_applied": False,
                     }
 
                 # Add HOLD for tickers not in decisions
@@ -291,7 +292,8 @@ class SmartBetaBacktestEngine(BacktestEngine):
                         decisions[ticker] = {
                             "action": "HOLD",
                             "shares": 0,
-                            "justification": "No change from Smart Beta allocation"
+                            "justification": "No change from Smart Beta allocation",
+                            "_applied": False,
                         }
 
                 # Update last rebalance date
@@ -467,7 +469,8 @@ class SmartBetaBacktestEngine(BacktestEngine):
                 decisions[ticker] = {
                     "action": "HOLD",
                     "shares": 0,
-                    "justification": "No rebalancing scheduled"
+                    "justification": "No rebalancing scheduled",
+                    "_applied": False,
                 }
         return decisions
 

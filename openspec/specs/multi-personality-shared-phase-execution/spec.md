@@ -44,3 +44,7 @@ The system SHALL export a machine-readable daily decision artifact for day-share
 - **WHEN** a personality emits a decision with execution metadata such as `_applied` or risk reasons
 - **THEN** the daily decision artifact SHALL include equivalent machine-readable fields without requiring consumers to parse logs.
 
+#### Scenario: Smart beta applied state is explicit
+- **WHEN** a day-shared multi-personality backtest includes `smart_beta_passive`
+- **THEN** each Smart Beta daily decision row SHALL include a boolean `applied` value rather than `null`.
+

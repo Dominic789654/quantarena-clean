@@ -521,6 +521,7 @@ def test_execute_day_with_decisions_sells_before_buys_when_ordered():
             "MSFT": {"shares": 0, "value": 0.0},
         },
     }
+    engine.broker_audit_events = []
 
     class Tracker:
         def __init__(self):
@@ -715,9 +716,51 @@ def test_generate_smart_beta_decisions_passes_cash_to_allocator():
     )
 
     assert decisions["AAPL"]["action"] == "HOLD"
+    assert decisions["AAPL"]["_applied"] is False
     assert captured["current_portfolio"]["cashflow"] == 1000.0
     assert captured["current_portfolio"]["positions"]["AAPL"]["shares"] == 10
     assert captured["decision_portfolio"]["cashflow"] == 1000.0
+
+
+def test_generate_smart_beta_trade_decisions_mark_unapplied():
+    engine = SmartBetaBacktestEngine.__new__(SmartBetaBacktestEngine)
+    engine.tickers = ["AAPL"]
+    engine.current_portfolio = {"cashflow": 1000.0, "positions": {}}
+    engine.initial_cash = 1000.0
+    engine.last_rebalance_date = None
+    engine.smart_beta_available = True
+    engine._prepare_stock_data = lambda date: {}
+    engine._prepare_market_data = lambda date: pd.DataFrame({"close": [100.0, 101.0]}, index=pd.to_datetime(["2024-01-01", "2024-01-02"]))
+    engine._get_macro_indicators = lambda date: None
+    engine._get_news_items = lambda date: None
+    engine._calculate_market_return = lambda market_data: None
+
+    class Allocator:
+        def allocate(self, **kwargs):
+            return AllocationResult(weights={"AAPL": 1.0}, benchmark_weights={"AAPL": 1.0}, success=True)
+
+        def get_trading_decisions(self, allocation, current_portfolio, prices, total_capital):
+            return [
+                {
+                    "ticker": "AAPL",
+                    "action": "BUY",
+                    "shares": 2,
+                    "price": 100.0,
+                    "target_weight": 0.2,
+                }
+            ]
+
+    engine.smart_beta_allocator = Allocator()
+
+    decisions = SmartBetaBacktestEngine._generate_smart_beta_decisions(
+        engine,
+        datetime(2024, 1, 2),
+        {"AAPL": 100.0},
+    )
+
+    assert decisions["AAPL"]["action"] == "BUY"
+    assert decisions["AAPL"]["shares"] == 2
+    assert decisions["AAPL"]["_applied"] is False
 
 
 

@@ -272,6 +272,23 @@ def test_multi_personality_report_exports_daily_decisions_and_news_diagnostics(m
     assert peek_news_diagnostics() == []
 
 
+def test_multi_personality_decision_record_preserves_false_applied_state():
+    record = MultiPersonalityBacktest._normalize_decision_record(
+        date="2026-01-02",
+        personality="smart_beta_passive",
+        ticker="AAA",
+        decision={
+            "action": "HOLD",
+            "shares": 0,
+            "justification": "No rebalancing scheduled",
+            "_applied": False,
+        },
+    )
+
+    assert record["applied"] is False
+    assert record["metadata"] == {"_applied": False}
+
+
 class FailingBacktestEngine(FakeBacktestEngine):
     def _generate_llm_decisions_with_precollected_signals(self, date, prices, enhanced_signals, priority_order=None):
         raise RuntimeError(f"boom-{self.personality}-{date}")
