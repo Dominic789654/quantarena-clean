@@ -14,6 +14,7 @@ from shared.utils.path_manager import get_project_root
 DEFAULT_LIVE_READONLY_PROVIDER = "snapshot"
 LIVE_READONLY_PROVIDER_ENV = "QUANTARENA_LIVE_READONLY_PROVIDER"
 LIVE_READONLY_SNAPSHOT_ENV = "QUANTARENA_LIVE_READONLY_SNAPSHOT"
+LIVE_READONLY_PAPER_STATE_ENV = "QUANTARENA_LIVE_READONLY_PAPER_STATE"
 LIVE_READONLY_READ_OPERATIONS = ("account", "positions", "orders", "quotes")
 LIVE_READONLY_ERROR_CREDENTIAL_MISSING = "credential_missing"
 LIVE_READONLY_ERROR_PROVIDER = "provider_error"
@@ -47,6 +48,7 @@ class LiveReadonlyConfig:
 
     provider: str = DEFAULT_LIVE_READONLY_PROVIDER
     snapshot_path: Path | None = None
+    paper_state_path: Path | None = None
 
     @classmethod
     def from_env(
@@ -54,6 +56,7 @@ class LiveReadonlyConfig:
         *,
         provider: str | None = None,
         snapshot_path: str | Path | None = None,
+        paper_state_path: str | Path | None = None,
     ) -> "LiveReadonlyConfig":
         resolved_provider = (
             provider
@@ -61,9 +64,11 @@ class LiveReadonlyConfig:
             or DEFAULT_LIVE_READONLY_PROVIDER
         )
         resolved_snapshot = snapshot_path or os.getenv(LIVE_READONLY_SNAPSHOT_ENV)
+        resolved_paper_state = paper_state_path or os.getenv(LIVE_READONLY_PAPER_STATE_ENV)
         return cls(
             provider=str(resolved_provider).strip().lower(),
             snapshot_path=_resolve_snapshot_path(resolved_snapshot),
+            paper_state_path=_resolve_project_path(resolved_paper_state),
         )
 
 
@@ -194,13 +199,95 @@ class SnapshotLiveReadonlyBrokerAdapter:
         return payload
 
 
+class PaperSandboxLiveReadonlyBrokerAdapter:
+    """Read live-style snapshots from a local paper portfolio state file."""
+
+    provider = "paper_sandbox"
+    readonly = True
+    mutation_allowed = False
+
+    def __init__(self, paper_state_path: str | Path | None):
+        self.paper_state_path = _resolve_project_path(paper_state_path)
+        if self.paper_state_path is None:
+            raise LiveReadonlyConfigurationError(
+                "paper_sandbox provider requires --paper-state or QUANTARENA_LIVE_READONLY_PAPER_STATE"
+            )
+
+    def readonly_capabilities(self) -> dict[str, Any]:
+        return _readonly_capabilities(
+            provider=self.provider,
+            paper_state_path=self.paper_state_path,
+        )
+
+    def get_account(self) -> dict[str, Any]:
+        from .paper_portfolio import _account_payload
+
+        return _account_payload(self._load_broker())
+
+    def get_positions(self) -> list[dict[str, Any]]:
+        from .paper_portfolio import _positions_payload
+
+        return _positions_payload(self._load_broker())
+
+    def get_orders(
+        self,
+        *,
+        status: str | None = None,
+        symbol: str | None = None,
+    ) -> list[dict[str, Any]]:
+        from .broker import BrokerOrderStatus
+        from .paper_portfolio import _order_payload
+
+        broker = self._load_broker()
+        normalized_status = BrokerOrderStatus(status) if status else None
+        return [
+            _order_payload(order)
+            for order in broker.get_orders(status=normalized_status, symbol=symbol)
+        ]
+
+    def get_quotes(self, symbols: Sequence[str] | None = None) -> dict[str, dict[str, Any]]:
+        from .paper_portfolio import _quote_payload
+
+        broker = self._load_broker()
+        requested = [symbol.strip().upper() for symbol in (symbols or []) if symbol.strip()]
+        if not requested:
+            requested = sorted(broker.quotes)
+        return {
+            symbol: _quote_payload(quote)
+            for symbol, quote in broker.get_quotes(requested).items()
+        }
+
+    def submit_order(self, *args: Any, **kwargs: Any) -> None:
+        raise LiveReadonlyMutationError("paper_sandbox live read-only adapter does not allow order submission")
+
+    def fill_order(self, *args: Any, **kwargs: Any) -> None:
+        raise LiveReadonlyMutationError("paper_sandbox live read-only adapter does not allow order fills")
+
+    def cancel_order(self, *args: Any, **kwargs: Any) -> None:
+        raise LiveReadonlyMutationError("paper_sandbox live read-only adapter does not allow order cancellation")
+
+    def _load_broker(self) -> Any:
+        from .paper_portfolio import broker_from_state
+
+        assert self.paper_state_path is not None
+        if not self.paper_state_path.is_file():
+            raise LiveReadonlyConfigurationError(f"paper sandbox state not found: {self.paper_state_path}")
+        try:
+            payload = json.loads(self.paper_state_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise LiveReadonlyConfigurationError(f"invalid paper sandbox state JSON: {exc}") from exc
+        if not isinstance(payload, Mapping):
+            raise LiveReadonlyConfigurationError("paper sandbox state must be a JSON object")
+        return broker_from_state(payload)
+
+
 class LiveReadonlyBrokerManager:
     """Command-oriented facade over a live read-only broker adapter."""
 
     def __init__(
         self,
         config: LiveReadonlyConfig | None = None,
-        adapter: SnapshotLiveReadonlyBrokerAdapter | None = None,
+        adapter: Any | None = None,
     ):
         self.config = config or LiveReadonlyConfig.from_env()
         self.adapter = adapter or create_live_readonly_adapter(self.config)
@@ -212,6 +299,7 @@ class LiveReadonlyBrokerManager:
             capabilities = _readonly_capabilities(
                 provider=getattr(self.adapter, "provider", self.config.provider),
                 snapshot_path=getattr(self.adapter, "snapshot_path", None),
+                paper_state_path=getattr(self.adapter, "paper_state_path", None),
             )
         return dict(capabilities)
 
@@ -288,11 +376,15 @@ class LiveReadonlyBrokerManager:
         )
 
 
-def create_live_readonly_adapter(config: LiveReadonlyConfig) -> SnapshotLiveReadonlyBrokerAdapter:
+def create_live_readonly_adapter(
+    config: LiveReadonlyConfig,
+) -> SnapshotLiveReadonlyBrokerAdapter | PaperSandboxLiveReadonlyBrokerAdapter:
     """Create the configured live read-only adapter."""
     provider = str(config.provider or "").strip().lower()
     if provider == "snapshot":
         return SnapshotLiveReadonlyBrokerAdapter(config.snapshot_path)
+    if provider == "paper_sandbox":
+        return PaperSandboxLiveReadonlyBrokerAdapter(config.paper_state_path)
     raise LiveReadonlyConfigurationError(f"unsupported live read-only provider: {config.provider}")
 
 
@@ -304,6 +396,7 @@ def validate_live_readonly_provider_contract(adapter: Any) -> LiveReadonlyProvid
         else _readonly_capabilities(
             provider=getattr(adapter, "provider", "unknown"),
             snapshot_path=getattr(adapter, "snapshot_path", None),
+            paper_state_path=getattr(adapter, "paper_state_path", None),
         )
     )
     provider = str(capabilities.get("provider") or getattr(adapter, "provider", "unknown"))
@@ -366,7 +459,8 @@ def validate_live_readonly_provider_contract(adapter: Any) -> LiveReadonlyProvid
 def _readonly_capabilities(
     *,
     provider: str,
-    snapshot_path: str | Path | None,
+    snapshot_path: str | Path | None = None,
+    paper_state_path: str | Path | None = None,
 ) -> dict[str, Any]:
     capabilities = {
         "provider": provider,
@@ -376,6 +470,8 @@ def _readonly_capabilities(
     }
     if snapshot_path is not None:
         capabilities["snapshot_path"] = str(snapshot_path)
+    if paper_state_path is not None:
+        capabilities["paper_state_path"] = str(paper_state_path)
     return capabilities
 
 
@@ -680,6 +776,10 @@ def _int_value(value: Any) -> int:
 
 
 def _resolve_snapshot_path(path: str | Path | None) -> Path | None:
+    return _resolve_project_path(path)
+
+
+def _resolve_project_path(path: str | Path | None) -> Path | None:
     if path is None or str(path).strip() == "":
         return None
     resolved = Path(path)

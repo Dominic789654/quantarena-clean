@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from quantarena.cli import build_parser, main
+from trading import PaperPortfolioManager
 
 
 FIXTURE_SNAPSHOT = Path("tests/fixtures/live_readonly/snapshot.json")
@@ -45,6 +46,25 @@ def test_cli_parser_exposes_live_contract_command():
     assert args.command == "live"
     assert args.live_command == "contract"
     assert str(args.snapshot) == "live.json"
+
+
+def test_cli_parser_exposes_live_paper_sandbox_state():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "live",
+            "--provider",
+            "paper_sandbox",
+            "--paper-state",
+            "paper.json",
+            "account",
+        ]
+    )
+
+    assert args.command == "live"
+    assert args.provider == "paper_sandbox"
+    assert str(args.paper_state) == "paper.json"
+    assert args.live_command == "account"
 
 
 def test_cli_parser_does_not_expose_live_mutating_order_commands():
@@ -86,6 +106,45 @@ def test_live_cli_contract_outputs_provider_contract(capsys):
     ]
 
 
+def test_live_cli_paper_sandbox_account_and_contract_do_not_mutate_state(tmp_path: Path, capsys):
+    state = _write_paper_state(tmp_path / "paper_state.json")
+    before = state.read_text(encoding="utf-8")
+
+    account_exit = main(
+        [
+            "live",
+            "--provider",
+            "paper_sandbox",
+            "--paper-state",
+            str(state),
+            "account",
+        ]
+    )
+    account_payload = json.loads(capsys.readouterr().out)
+    contract_exit = main(
+        [
+            "live",
+            "--provider",
+            "paper_sandbox",
+            "--paper-state",
+            str(state),
+            "contract",
+        ]
+    )
+    contract_payload = json.loads(capsys.readouterr().out)
+
+    assert account_exit == 0
+    assert account_payload["ok"] is True
+    assert account_payload["result"]["provider"] == "paper_sandbox"
+    assert account_payload["result"]["paper_state_path"] == str(state)
+    assert account_payload["result"]["account"]["cash"] == 700.0
+    assert contract_exit == 0
+    assert contract_payload["ok"] is True
+    assert contract_payload["command"] == "contract"
+    assert contract_payload["result"]["provider"] == "paper_sandbox"
+    assert state.read_text(encoding="utf-8") == before
+
+
 def test_live_cli_smoke_outputs_readonly_steps(capsys):
     exit_code = main(["live", "--snapshot", str(FIXTURE_SNAPSHOT), "smoke"])
 
@@ -123,3 +182,29 @@ def test_live_cli_contract_missing_snapshot_returns_category(tmp_path: Path, cap
     assert payload["error"].startswith("live snapshot not found")
     assert payload["result"]["category"] == "credential_missing"
     assert payload["result"]["failed_command"] == "account"
+
+
+def test_live_cli_paper_sandbox_missing_state_returns_nonzero_json(tmp_path: Path, capsys):
+    exit_code = main(
+        [
+            "live",
+            "--provider",
+            "paper_sandbox",
+            "--paper-state",
+            str(tmp_path / "missing.json"),
+            "contract",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert payload["ok"] is False
+    assert payload["command"] == "contract"
+    assert payload["result"]["category"] == "credential_missing"
+    assert "paper sandbox state not found" in payload["error"]
+
+
+def _write_paper_state(path: Path) -> Path:
+    result = PaperPortfolioManager(state_path=path).smoke()
+    assert result.ok is True
+    return path

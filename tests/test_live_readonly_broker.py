@@ -13,6 +13,8 @@ from trading import (
     LiveReadonlyConfigurationError,
     LiveReadonlyMutationError,
     LiveReadonlyRateLimitError,
+    PaperPortfolioManager,
+    PaperSandboxLiveReadonlyBrokerAdapter,
     SnapshotLiveReadonlyBrokerAdapter,
     create_live_readonly_adapter,
     validate_live_readonly_provider_contract,
@@ -202,6 +204,85 @@ def test_live_readonly_provider_contract_reports_rate_limit_failure():
     assert [check["command"] for check in result.checks] == ["account", "positions"]
 
 
+def test_paper_sandbox_live_readonly_adapter_reads_paper_state(tmp_path: Path):
+    state = _write_paper_sandbox_state(tmp_path / "paper_state.json")
+    manager = LiveReadonlyBrokerManager(
+        config=LiveReadonlyConfig(provider="paper_sandbox", paper_state_path=state)
+    )
+
+    account = manager.account()
+    positions = manager.positions()
+    filled_orders = manager.orders(status="filled", symbol="AAPL")
+    quotes = manager.quotes(symbols=["AAPL", "MISSING"])
+
+    assert account.ok is True
+    assert account.result["provider"] == "paper_sandbox"
+    assert account.result["readonly"] is True
+    assert account.result["mutation_allowed"] is False
+    assert account.result["paper_state_path"] == str(state)
+    assert account.result["account"]["cash"] == 700.0
+    assert account.result["account"]["total_value"] == 1000.0
+    assert positions.result["positions"] == [
+        {"symbol": "AAPL", "shares": 3, "market_value": 300.0, "last_price": 100.0}
+    ]
+    assert len(filled_orders.result["orders"]) == 1
+    assert filled_orders.result["orders"][0]["order_id"] == "paper-000001"
+    assert quotes.result["quotes"] == {
+        "AAPL": {
+            "symbol": "AAPL",
+            "price": 100.0,
+            "bid": None,
+            "ask": None,
+            "timestamp": None,
+        }
+    }
+
+
+def test_paper_sandbox_provider_satisfies_contract_and_does_not_mutate_state(tmp_path: Path):
+    state = _write_paper_sandbox_state(tmp_path / "paper_state.json")
+    before = state.read_text(encoding="utf-8")
+    adapter = PaperSandboxLiveReadonlyBrokerAdapter(state)
+
+    result = validate_live_readonly_provider_contract(adapter)
+
+    assert result.ok is True
+    assert result.provider == "paper_sandbox"
+    assert [(check["command"], check["ok"], check["count"]) for check in result.checks] == [
+        ("account", True, 1),
+        ("positions", True, 1),
+        ("orders", True, 1),
+        ("quotes", True, 1),
+    ]
+    assert state.read_text(encoding="utf-8") == before
+
+
+def test_paper_sandbox_adapter_rejects_mutations(tmp_path: Path):
+    state = _write_paper_sandbox_state(tmp_path / "paper_state.json")
+    adapter = PaperSandboxLiveReadonlyBrokerAdapter(state)
+
+    with pytest.raises(LiveReadonlyMutationError):
+        adapter.submit_order(symbol="AAPL", side="BUY", shares=1, limit_price=100.0)
+
+    with pytest.raises(LiveReadonlyMutationError):
+        adapter.fill_order("paper-000001")
+
+    with pytest.raises(LiveReadonlyMutationError):
+        adapter.cancel_order("paper-000001")
+
+
+def test_paper_sandbox_configuration_errors_are_explicit(tmp_path: Path):
+    with pytest.raises(LiveReadonlyConfigurationError, match="requires --paper-state"):
+        PaperSandboxLiveReadonlyBrokerAdapter(None)
+
+    with pytest.raises(LiveReadonlyConfigurationError, match="paper sandbox state not found"):
+        PaperSandboxLiveReadonlyBrokerAdapter(tmp_path / "missing.json").get_account()
+
+    with pytest.raises(LiveReadonlyConfigurationError, match="paper sandbox state not found"):
+        create_live_readonly_adapter(
+            LiveReadonlyConfig(provider="paper_sandbox", paper_state_path=tmp_path / "missing.json")
+        ).get_account()
+
+
 def test_live_readonly_adapter_rejects_mutations():
     snapshot = FIXTURE_SNAPSHOT
     adapter = SnapshotLiveReadonlyBrokerAdapter(snapshot)
@@ -222,6 +303,13 @@ def test_live_readonly_configuration_errors_are_explicit(tmp_path: Path):
 
     with pytest.raises(LiveReadonlyConfigurationError, match="unsupported"):
         create_live_readonly_adapter(LiveReadonlyConfig(provider="unknown", snapshot_path=tmp_path / "x.json"))
+
+
+def _write_paper_sandbox_state(path: Path) -> Path:
+    manager = PaperPortfolioManager(state_path=path)
+    result = manager.smoke()
+    assert result.ok is True
+    return path
 
 
 class _ContractProbeAdapter:

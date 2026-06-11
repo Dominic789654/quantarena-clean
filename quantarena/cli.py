@@ -291,6 +291,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Snapshot JSON path for the snapshot live read-only provider",
     )
+    live_parser.add_argument(
+        "--paper-state",
+        type=Path,
+        help="Paper portfolio state path for the paper_sandbox live read-only provider",
+    )
     live_subparsers = live_parser.add_subparsers(dest="live_command", required=True)
     live_subparsers.add_parser("contract", help="Validate the read-only live provider contract")
     live_subparsers.add_parser("smoke", help="Run a read-only live broker smoke check")
@@ -734,7 +739,11 @@ def run_live_command(args: argparse.Namespace) -> int:
     from trading.live_readonly import LiveReadonlyBrokerManager, LiveReadonlyConfig
 
     try:
-        config = LiveReadonlyConfig.from_env(provider=args.provider, snapshot_path=args.snapshot)
+        config = LiveReadonlyConfig.from_env(
+            provider=args.provider,
+            snapshot_path=args.snapshot,
+            paper_state_path=args.paper_state,
+        )
         manager = LiveReadonlyBrokerManager(config=config)
         result = _dispatch_live_command(manager, args).to_dict()
     except Exception as exc:
