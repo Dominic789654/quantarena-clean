@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -17,8 +16,11 @@ from trading import (
 )
 
 
-def test_snapshot_live_readonly_adapter_reads_snapshots_and_filters(tmp_path: Path):
-    snapshot = _write_live_snapshot(tmp_path / "live_snapshot.json")
+FIXTURE_SNAPSHOT = Path("tests/fixtures/live_readonly/snapshot.json")
+
+
+def test_snapshot_live_readonly_adapter_reads_snapshots_and_filters():
+    snapshot = FIXTURE_SNAPSHOT
     manager = LiveReadonlyBrokerManager(
         config=LiveReadonlyConfig(provider="snapshot", snapshot_path=snapshot)
     )
@@ -29,6 +31,9 @@ def test_snapshot_live_readonly_adapter_reads_snapshots_and_filters(tmp_path: Pa
     quotes = manager.quotes(symbols=["MSFT", "MISSING"])
 
     assert account.ok is True
+    assert account.result["readonly"] is True
+    assert account.result["mutation_allowed"] is False
+    assert account.result["snapshot_path"].endswith("tests/fixtures/live_readonly/snapshot.json")
     assert account.result["account"]["cash"] == 1200.5
     assert account.result["account"]["currency"] == "USD"
     assert [position["symbol"] for position in positions.result["positions"]] == ["AAPL", "MSFT"]
@@ -45,8 +50,8 @@ def test_snapshot_live_readonly_adapter_reads_snapshots_and_filters(tmp_path: Pa
     }
 
 
-def test_live_readonly_manager_smoke_queries_read_paths(tmp_path: Path):
-    snapshot = _write_live_snapshot(tmp_path / "live_snapshot.json")
+def test_live_readonly_manager_smoke_queries_read_paths_with_metadata():
+    snapshot = FIXTURE_SNAPSHOT
     manager = LiveReadonlyBrokerManager(
         config=LiveReadonlyConfig(provider="snapshot", snapshot_path=snapshot)
     )
@@ -54,17 +59,70 @@ def test_live_readonly_manager_smoke_queries_read_paths(tmp_path: Path):
     result = manager.smoke()
 
     assert result.ok is True
-    assert [step["command"] for step in result.result["steps"]] == [
+    assert result.result["provider"] == "snapshot"
+    assert result.result["readonly"] is True
+    assert result.result["mutation_allowed"] is False
+    assert result.result["read_operations"] == ["account", "positions", "orders", "quotes"]
+    assert result.result["snapshot_path"].endswith("tests/fixtures/live_readonly/snapshot.json")
+    assert [(step["command"], step["count"], step["error"]) for step in result.result["steps"]] == [
+        ("account", 1, None),
+        ("positions", 2, None),
+        ("orders", 2, None),
+        ("quotes", 2, None),
+    ]
+
+
+def test_live_readonly_manager_smoke_reports_read_failures(tmp_path: Path):
+    snapshot = tmp_path / "invalid_snapshot.json"
+    snapshot.write_text("[", encoding="utf-8")
+    manager = LiveReadonlyBrokerManager(
+        config=LiveReadonlyConfig(provider="snapshot", snapshot_path=snapshot)
+    )
+
+    result = manager.smoke()
+
+    assert result.ok is False
+    assert result.result["readonly"] is True
+    assert result.result["mutation_allowed"] is False
+    assert result.result["failed_command"] == "account"
+    assert result.result["steps"] == [
+        {
+            "ok": False,
+            "command": "account",
+            "count": 0,
+            "error": result.result["steps"][0]["error"],
+        }
+    ]
+    assert "invalid live snapshot JSON" in result.result["steps"][0]["error"]
+    assert "live readonly smoke failed at account" in result.error
+
+
+def test_live_readonly_manager_exposes_capabilities_without_mutation_facade():
+    manager = LiveReadonlyBrokerManager(
+        config=LiveReadonlyConfig(provider="snapshot", snapshot_path=FIXTURE_SNAPSHOT)
+    )
+
+    assert manager.readonly_capabilities() == {
+        "provider": "snapshot",
+        "readonly": True,
+        "mutation_allowed": False,
+        "read_operations": ["account", "positions", "orders", "quotes"],
+        "snapshot_path": str(FIXTURE_SNAPSHOT.resolve()),
+    }
+    assert [operation for operation in ["submit_order", "fill_order", "cancel_order"] if hasattr(manager, operation)] == []
+    assert [
+        step["command"]
+        for step in manager.smoke().result["steps"]
+    ] == [
         "account",
         "positions",
         "orders",
         "quotes",
     ]
-    assert result.result["provider"] == "snapshot"
 
 
-def test_live_readonly_adapter_rejects_mutations(tmp_path: Path):
-    snapshot = _write_live_snapshot(tmp_path / "live_snapshot.json")
+def test_live_readonly_adapter_rejects_mutations():
+    snapshot = FIXTURE_SNAPSHOT
     adapter = SnapshotLiveReadonlyBrokerAdapter(snapshot)
 
     with pytest.raises(LiveReadonlyMutationError):
@@ -83,50 +141,3 @@ def test_live_readonly_configuration_errors_are_explicit(tmp_path: Path):
 
     with pytest.raises(LiveReadonlyConfigurationError, match="unsupported"):
         create_live_readonly_adapter(LiveReadonlyConfig(provider="unknown", snapshot_path=tmp_path / "x.json"))
-
-
-def _write_live_snapshot(path: Path) -> Path:
-    path.write_text(
-        json.dumps(
-            {
-                "account": {
-                    "cash": 1200.5,
-                    "total_value": 1550.5,
-                    "buying_power": 1200.5,
-                    "currency": "USD",
-                },
-                "positions": {
-                    "MSFT": {"shares": 1, "market_value": 55.0, "last_price": 55.0},
-                    "AAPL": {"shares": 2, "market_value": 200.0, "last_price": 100.0},
-                },
-                "orders": [
-                    {
-                        "order_id": "live-002",
-                        "status": "open",
-                        "symbol": "MSFT",
-                        "side": "SELL",
-                        "shares": 1,
-                        "limit_price": 56.0,
-                        "filled_quantity": 0,
-                        "remaining_quantity": 1,
-                    },
-                    {
-                        "order_id": "live-001",
-                        "status": "filled",
-                        "symbol": "AAPL",
-                        "side": "BUY",
-                        "shares": 2,
-                        "limit_price": 100.0,
-                        "filled_quantity": 2,
-                        "remaining_quantity": 0,
-                    },
-                ],
-                "quotes": {
-                    "AAPL": {"price": 101.0, "bid": 100.5, "ask": 101.5, "timestamp": "2026-06-09T00:00:00Z"},
-                    "MSFT": 55.0,
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    return path

@@ -1,0 +1,51 @@
+{
+  "account": {
+    "cash": 1200.5,
+    "total_value": 1550.5,
+    "buying_power": 1200.5,
+    "currency": "USD"
+  },
+  "positions": {
+    "MSFT": {
+      "shares": 1,
+      "market_value": 55.0,
+      "last_price": 55.0
+    },
+    "AAPL": {
+      "shares": 2,
+      "market_value": 200.0,
+      "last_price": 100.0
+    }
+  },
+  "orders": [
+    {
+      "order_id": "live-002",
+      "status": "open",
+      "symbol": "MSFT",
+      "side": "SELL",
+      "shares": 1,
+      "limit_price": 56.0,
+      "filled_quantity": 0,
+      "remaining_quantity": 1
+    },
+    {
+      "order_id": "live-001",
+      "status": "filled",
+      "symbol": "AAPL",
+      "side": "BUY",
+      "shares": 2,
+      "limit_price": 100.0,
+      "filled_quantity": 2,
+      "remaining_quantity": 0
+    }
+  ],
+  "quotes": {
+    "AAPL": {
+      "price": 101.0,
+      "bid": 100.5,
+      "ask": 101.5,
+      "timestamp": "2026-06-09T00:00:00Z"
+    },
+    "MSFT": 55.0
+  }
+}

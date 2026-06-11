@@ -10,6 +10,9 @@ import pytest
 from quantarena.cli import build_parser, main
 
 
+FIXTURE_SNAPSHOT = Path("tests/fixtures/live_readonly/snapshot.json")
+
+
 def test_cli_parser_exposes_live_readonly_commands():
     parser = build_parser()
     args = parser.parse_args(
@@ -42,32 +45,33 @@ def test_cli_parser_does_not_expose_live_mutating_order_commands():
         parser.parse_args(["live", "order", "submit"])
 
 
-def test_live_cli_account_outputs_json(tmp_path: Path, capsys):
-    snapshot = _write_live_snapshot(tmp_path / "live_snapshot.json")
-
-    exit_code = main(["live", "--snapshot", str(snapshot), "account"])
+def test_live_cli_account_outputs_json(capsys):
+    exit_code = main(["live", "--snapshot", str(FIXTURE_SNAPSHOT), "account"])
 
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
     assert payload["ok"] is True
     assert payload["command"] == "account"
     assert payload["result"]["provider"] == "snapshot"
-    assert payload["result"]["account"]["total_value"] == 1500.0
+    assert payload["result"]["readonly"] is True
+    assert payload["result"]["mutation_allowed"] is False
+    assert payload["result"]["account"]["total_value"] == 1550.5
 
 
-def test_live_cli_smoke_outputs_readonly_steps(tmp_path: Path, capsys):
-    snapshot = _write_live_snapshot(tmp_path / "live_snapshot.json")
-
-    exit_code = main(["live", "--snapshot", str(snapshot), "smoke"])
+def test_live_cli_smoke_outputs_readonly_steps(capsys):
+    exit_code = main(["live", "--snapshot", str(FIXTURE_SNAPSHOT), "smoke"])
 
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
     assert payload["ok"] is True
-    assert [step["command"] for step in payload["result"]["steps"]] == [
-        "account",
-        "positions",
-        "orders",
-        "quotes",
+    assert payload["result"]["readonly"] is True
+    assert payload["result"]["mutation_allowed"] is False
+    assert payload["result"]["snapshot_path"].endswith("tests/fixtures/live_readonly/snapshot.json")
+    assert [(step["command"], step["count"], step["error"]) for step in payload["result"]["steps"]] == [
+        ("account", 1, None),
+        ("positions", 2, None),
+        ("orders", 2, None),
+        ("quotes", 2, None),
     ]
 
 
@@ -79,23 +83,3 @@ def test_live_cli_missing_snapshot_returns_nonzero_json(tmp_path: Path, capsys):
     assert payload["ok"] is False
     assert payload["command"] == "positions"
     assert "live snapshot not found" in payload["error"]
-
-
-def _write_live_snapshot(path: Path) -> Path:
-    path.write_text(
-        json.dumps(
-            {
-                "account": {
-                    "cash": 1000.0,
-                    "total_value": 1500.0,
-                    "buying_power": 1000.0,
-                    "currency": "USD",
-                },
-                "positions": [{"symbol": "AAPL", "shares": 3, "market_value": 300.0, "last_price": 100.0}],
-                "orders": [{"order_id": "live-001", "status": "filled", "symbol": "AAPL", "side": "BUY"}],
-                "quotes": {"AAPL": {"price": 100.0}},
-            }
-        ),
-        encoding="utf-8",
-    )
-    return path

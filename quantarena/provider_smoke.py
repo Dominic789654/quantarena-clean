@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Mapping
 
+from shared.config.provider_routing import preferred_us_data_provider
 from shared.utils.path_manager import setup_paths
 
 
@@ -15,6 +16,16 @@ PROVIDER_KEY_ENV: dict[str, str] = {
     "alpha_vantage": "ALPHA_VANTAGE_API_KEY",
     "fmp": "FMP_API_KEY",
     "tushare": "TUSHARE_API_KEY",
+}
+PROVIDER_ALIASES: dict[str, str] = {
+    "alpha": "alpha_vantage",
+    "alphavantage": "alpha_vantage",
+    "alpha_vantage": "alpha_vantage",
+    "tushare": "tushare",
+    "fmp": "fmp",
+    "financialmodelingprep": "fmp",
+    "yfinance": "yfinance",
+    "yf": "yfinance",
 }
 
 
@@ -57,20 +68,15 @@ def run_provider_smoke_check(
     """Run a minimal live daily-candle provider check or skip cleanly without credentials."""
     setup_paths()
 
-    from apis.router import APISource, Router, build_api_source_config, resolve_api_source
-
     normalized_market = (market or "us").strip().lower()
-    source, source_error = _resolve_smoke_source(
-        market=normalized_market,
-        provider=provider,
-        api_source_cls=APISource,
-        build_api_source_config=build_api_source_config,
-        resolve_api_source=resolve_api_source,
-    )
     default_ticker = "600519" if normalized_market == "cn" else "AAPL"
     resolved_ticker = ticker or default_ticker
     resolved_date = date or datetime.utcnow().strftime("%Y-%m-%d")
     env_map = os.environ if env is None else env
+    source, source_error = _resolve_smoke_source(
+        market=normalized_market,
+        provider=provider,
+    )
 
     if source_error:
         return ProviderSmokeResult(
@@ -107,6 +113,8 @@ def run_provider_smoke_check(
         )
 
     try:
+        from apis.router import APISource, Router
+
         router = Router(source)
         if normalized_market == "cn":
             frame = router.get_cn_stock_daily_candles_df(resolved_ticker, trading_date)
@@ -156,29 +164,37 @@ def _resolve_smoke_source(
     *,
     market: str,
     provider: str | None,
-    api_source_cls: Any,
-    build_api_source_config: Any,
-    resolve_api_source: Any,
 ) -> tuple[str, str | None]:
     if provider:
         try:
-            source = api_source_cls.from_string(provider)
+            source = _provider_from_string(provider)
         except ValueError:
             return str(provider), f"invalid provider: {provider}"
     else:
-        source = resolve_api_source(market, build_api_source_config(market, None))
+        source = (
+            "tushare"
+            if market == "cn"
+            else preferred_us_data_provider(env_override=os.environ.get("DEEPFUND_US_API_SOURCE", ""))
+        )
 
     if market == "cn":
-        if source != api_source_cls.TUSHARE:
+        if source != "tushare":
             return source, f"provider {source} is not supported for market cn"
         return source, None
 
     if market == "us":
-        if source not in {api_source_cls.FMP, api_source_cls.ALPHA_VANTAGE}:
+        if source not in {"fmp", "alpha_vantage"}:
             return source, f"provider {source} is not supported for market us"
         return source, None
 
     return source, f"unsupported market: {market}"
+
+
+def _provider_from_string(value: str | None) -> str:
+    key = (value or "").strip().lower()
+    if key in PROVIDER_ALIASES:
+        return PROVIDER_ALIASES[key]
+    raise ValueError(f"Invalid API source: {value}")
 
 
 def _safe_exception_reason(exc: Exception, env: Mapping[str, str]) -> str:

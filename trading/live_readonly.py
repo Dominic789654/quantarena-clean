@@ -14,6 +14,7 @@ from shared.utils.path_manager import get_project_root
 DEFAULT_LIVE_READONLY_PROVIDER = "snapshot"
 LIVE_READONLY_PROVIDER_ENV = "QUANTARENA_LIVE_READONLY_PROVIDER"
 LIVE_READONLY_SNAPSHOT_ENV = "QUANTARENA_LIVE_READONLY_SNAPSHOT"
+LIVE_READONLY_READ_OPERATIONS = ("account", "positions", "orders", "quotes")
 
 
 class LiveReadonlyError(RuntimeError):
@@ -76,6 +77,8 @@ class SnapshotLiveReadonlyBrokerAdapter:
     """Read broker-neutral snapshots from a local JSON file."""
 
     provider = "snapshot"
+    readonly = True
+    mutation_allowed = False
 
     def __init__(self, snapshot_path: str | Path | None):
         self.snapshot_path = _resolve_snapshot_path(snapshot_path)
@@ -83,6 +86,12 @@ class SnapshotLiveReadonlyBrokerAdapter:
             raise LiveReadonlyConfigurationError(
                 "snapshot provider requires --snapshot or QUANTARENA_LIVE_READONLY_SNAPSHOT"
             )
+
+    def readonly_capabilities(self) -> dict[str, Any]:
+        return _readonly_capabilities(
+            provider=self.provider,
+            snapshot_path=self.snapshot_path,
+        )
 
     def get_account(self) -> dict[str, Any]:
         payload = self._load_payload()
@@ -157,18 +166,28 @@ class LiveReadonlyBrokerManager:
         self.config = config or LiveReadonlyConfig.from_env()
         self.adapter = adapter or create_live_readonly_adapter(self.config)
 
+    def readonly_capabilities(self) -> dict[str, Any]:
+        if hasattr(self.adapter, "readonly_capabilities"):
+            capabilities = self.adapter.readonly_capabilities()
+        else:
+            capabilities = _readonly_capabilities(
+                provider=getattr(self.adapter, "provider", self.config.provider),
+                snapshot_path=getattr(self.adapter, "snapshot_path", None),
+            )
+        return dict(capabilities)
+
     def account(self) -> LiveReadonlyCommandResult:
         return LiveReadonlyCommandResult(
             ok=True,
             command="account",
-            result={"provider": self.adapter.provider, "account": self.adapter.get_account()},
+            result={**self.readonly_capabilities(), "account": self.adapter.get_account()},
         )
 
     def positions(self) -> LiveReadonlyCommandResult:
         return LiveReadonlyCommandResult(
             ok=True,
             command="positions",
-            result={"provider": self.adapter.provider, "positions": self.adapter.get_positions()},
+            result={**self.readonly_capabilities(), "positions": self.adapter.get_positions()},
         )
 
     def orders(self, *, status: str | None = None, symbol: str | None = None) -> LiveReadonlyCommandResult:
@@ -176,7 +195,7 @@ class LiveReadonlyBrokerManager:
             ok=True,
             command="orders",
             result={
-                "provider": self.adapter.provider,
+                **self.readonly_capabilities(),
                 "orders": self.adapter.get_orders(status=status, symbol=symbol),
             },
         )
@@ -186,42 +205,38 @@ class LiveReadonlyBrokerManager:
             ok=True,
             command="quotes",
             result={
-                "provider": self.adapter.provider,
+                **self.readonly_capabilities(),
                 "quotes": self.adapter.get_quotes(symbols),
             },
         )
 
     def smoke(self) -> LiveReadonlyCommandResult:
         steps: list[dict[str, Any]] = []
-        for step in [
-            self.account(),
-            self.positions(),
-            self.orders(),
-            self.quotes(symbols=self._smoke_quote_symbols()),
-        ]:
-            steps.append(step.to_dict())
-            if not step.ok:
+        checks = [
+            ("account", self.adapter.get_account),
+            ("positions", self.adapter.get_positions),
+            ("orders", self.adapter.get_orders),
+            ("quotes", self.adapter.get_quotes),
+        ]
+        for command, read_fn in checks:
+            step = _run_smoke_step(command, read_fn)
+            steps.append(step)
+            if not step["ok"]:
                 break
         ok = all(step.get("ok") is True for step in steps)
         failing_step = next((step for step in steps if step.get("ok") is not True), None)
+        result = {**self.readonly_capabilities(), "steps": steps}
+        if failing_step:
+            result["failed_command"] = failing_step.get("command")
         return LiveReadonlyCommandResult(
             ok=ok,
             command="smoke",
-            result={"provider": self.adapter.provider, "steps": steps},
-            error=None if ok else f"live readonly smoke failed at {failing_step.get('command')}",
-        )
-
-    def _smoke_quote_symbols(self) -> list[str]:
-        quotes = self.adapter.get_quotes()
-        if quotes:
-            return sorted(quotes)
-        positions = self.adapter.get_positions()
-        return sorted(
-            {
-                str(position.get("symbol", "")).strip().upper()
-                for position in positions
-                if str(position.get("symbol", "")).strip()
-            }
+            result=result,
+            error=(
+                None
+                if ok
+                else f"live readonly smoke failed at {failing_step.get('command')}: {failing_step.get('error')}"
+            ),
         )
 
 
@@ -231,6 +246,50 @@ def create_live_readonly_adapter(config: LiveReadonlyConfig) -> SnapshotLiveRead
     if provider == "snapshot":
         return SnapshotLiveReadonlyBrokerAdapter(config.snapshot_path)
     raise LiveReadonlyConfigurationError(f"unsupported live read-only provider: {config.provider}")
+
+
+def _readonly_capabilities(
+    *,
+    provider: str,
+    snapshot_path: str | Path | None,
+) -> dict[str, Any]:
+    capabilities = {
+        "provider": provider,
+        "readonly": True,
+        "mutation_allowed": False,
+        "read_operations": list(LIVE_READONLY_READ_OPERATIONS),
+    }
+    if snapshot_path is not None:
+        capabilities["snapshot_path"] = str(snapshot_path)
+    return capabilities
+
+
+def _run_smoke_step(command: str, read_fn: Any) -> dict[str, Any]:
+    try:
+        payload = read_fn()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "command": command,
+            "count": 0,
+            "error": str(exc),
+        }
+    return {
+        "ok": True,
+        "command": command,
+        "count": _read_result_count(command, payload),
+        "error": None,
+    }
+
+
+def _read_result_count(command: str, payload: Any) -> int:
+    if command == "account":
+        return 1 if isinstance(payload, Mapping) and payload else 0
+    if isinstance(payload, Mapping):
+        return len(payload)
+    if isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray)):
+        return len(payload)
+    return 0
 
 
 def _account_payload(payload: Mapping[str, Any]) -> dict[str, Any]:

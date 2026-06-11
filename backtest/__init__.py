@@ -15,53 +15,48 @@ Key Components:
 - MultiPersonalityBacktest: Parallel multi-personality backtesting (NEW)
 """
 
-from backtest.data_loader import DataPrefetcher
-from backtest.portfolio_tracker import PortfolioTracker, DailySnapshot, Trade
-from backtest.metrics import PerformanceMetrics
-from backtest.report import ReportGenerator
-from backtest.engine import BacktestEngine, BacktestResult, create_backtest_engine, run_backtest
-from backtest.fof_allocator import FOFAllocationResult, FOFAllocator, SleeveSnapshot
-from backtest.workflow_adapter import BacktestWorkflowAdapter, BacktestDecision, create_workflow_adapter
+from __future__ import annotations
 
-__all__ = [
-    "DataPrefetcher",
-    "PortfolioTracker",
-    "DailySnapshot",
-    "Trade",
-    "PerformanceMetrics",
-    "ReportGenerator",
-    "BacktestEngine",
-    "BacktestResult",
-    "create_backtest_engine",
-    "run_backtest",
-    "FOFAllocator",
-    "FOFAllocationResult",
-    "SleeveSnapshot",
-    "BacktestWorkflowAdapter",
-    "BacktestDecision",
-    "create_workflow_adapter",
-]
+from importlib import import_module
+from typing import Any
 
-# Optional: Portfolio allocator / FOF engine / multi-personality extras
-try:
-    from backtest.portfolio_allocator import PortfolioAllocator
-    from backtest.fof_engine import FOFBacktestEngine
-    from backtest.multi_personality_engine import (
-        MultiPersonalityBacktest,
-        MultiPersonalityComparison,
-        PersonalityResult,
-        SharedDataCache,
-        run_multi_personality_backtest,
-    )
 
-    __all__ += [
-        "PortfolioAllocator",
-        "FOFBacktestEngine",
-        "MultiPersonalityBacktest",
-        "MultiPersonalityComparison",
-        "PersonalityResult",
-        "SharedDataCache",
+_EXPORTS: dict[str, tuple[str, str]] = {
+    "DataPrefetcher": ("backtest.data_loader", "DataPrefetcher"),
+    "PortfolioTracker": ("backtest.portfolio_tracker", "PortfolioTracker"),
+    "DailySnapshot": ("backtest.portfolio_tracker", "DailySnapshot"),
+    "Trade": ("backtest.portfolio_tracker", "Trade"),
+    "PerformanceMetrics": ("backtest.metrics", "PerformanceMetrics"),
+    "ReportGenerator": ("backtest.report", "ReportGenerator"),
+    "BacktestEngine": ("backtest.engine", "BacktestEngine"),
+    "BacktestResult": ("backtest.engine", "BacktestResult"),
+    "create_backtest_engine": ("backtest.engine", "create_backtest_engine"),
+    "run_backtest": ("backtest.engine", "run_backtest"),
+    "FOFAllocator": ("backtest.fof_allocator", "FOFAllocator"),
+    "FOFAllocationResult": ("backtest.fof_allocator", "FOFAllocationResult"),
+    "SleeveSnapshot": ("backtest.fof_allocator", "SleeveSnapshot"),
+    "BacktestWorkflowAdapter": ("backtest.workflow_adapter", "BacktestWorkflowAdapter"),
+    "BacktestDecision": ("backtest.workflow_adapter", "BacktestDecision"),
+    "create_workflow_adapter": ("backtest.workflow_adapter", "create_workflow_adapter"),
+    "PortfolioAllocator": ("backtest.portfolio_allocator", "PortfolioAllocator"),
+    "FOFBacktestEngine": ("backtest.fof_engine", "FOFBacktestEngine"),
+    "MultiPersonalityBacktest": ("backtest.multi_personality_engine", "MultiPersonalityBacktest"),
+    "MultiPersonalityComparison": ("backtest.multi_personality_engine", "MultiPersonalityComparison"),
+    "PersonalityResult": ("backtest.multi_personality_engine", "PersonalityResult"),
+    "SharedDataCache": ("backtest.multi_personality_engine", "SharedDataCache"),
+    "run_multi_personality_backtest": (
+        "backtest.multi_personality_engine",
         "run_multi_personality_backtest",
-    ]
-except ImportError:
-    pass
+    ),
+}
+
+__all__ = list(_EXPORTS)
+
+
+def __getattr__(name: str) -> Any:
+    if name not in _EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attr_name = _EXPORTS[name]
+    value = getattr(import_module(module_name), attr_name)
+    globals()[name] = value
+    return value
