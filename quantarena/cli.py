@@ -196,6 +196,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print machine-readable fixture build output",
     )
 
+    cache_parser = subparsers.add_parser(
+        "cache",
+        help="Inspect local cache readiness",
+    )
+    cache_subparsers = cache_parser.add_subparsers(dest="cache_command", required=True)
+    cache_health_parser = cache_subparsers.add_parser(
+        "health",
+        help="Report cache readiness without fetching live data",
+    )
+    cache_health_parser.add_argument(
+        "--profile",
+        choices=["fixed-backtest"],
+        default="fixed-backtest",
+        help="Cache health profile to evaluate",
+    )
+    cache_health_parser.add_argument("--db-path", type=Path, default=Path("data/signal_flux.db"))
+    cache_health_parser.add_argument(
+        "--benchmark-cache-dir",
+        type=Path,
+        default=Path("tests/fixtures/fixed_backtest_data/benchmark_cache"),
+    )
+    cache_health_parser.add_argument(
+        "--news-replay-fixture",
+        type=Path,
+        default=Path("tests/fixtures/fixed_backtest_data/news_replay.jsonl"),
+    )
+    cache_health_parser.add_argument(
+        "--shared-phase1-cache-dir",
+        type=Path,
+        default=Path("data/backtest/shared_phase1_artifacts"),
+    )
+    cache_health_parser.add_argument(
+        "--shared-analyst-cache-dir",
+        type=Path,
+        default=Path("data/backtest/shared_analyst_cache"),
+    )
+    cache_health_parser.add_argument("--json", action="store_true")
+    cache_health_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero when required cache health checks fail",
+    )
+
     live_parser = subparsers.add_parser(
         "live",
         help="Inspect a read-only live broker adapter",
@@ -359,6 +402,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             skip_invalid=args.skip_invalid,
             as_json=args.json,
         )
+
+    if args.command == "cache" and args.cache_command == "health":
+        return run_cache_health_command(args)
 
     if args.command == "live":
         return run_live_command(args)
@@ -554,6 +600,35 @@ def run_news_replay_fixture_builder(
         print(f"tickers: {', '.join(payload['tickers'])}")
 
     return 0
+
+
+def run_cache_health_command(args: argparse.Namespace) -> int:
+    """Run cache health checks from the canonical CLI."""
+    from quantarena.cache_health import FixedBacktestCacheHealthConfig, run_fixed_backtest_cache_health
+
+    config = FixedBacktestCacheHealthConfig(
+        db_path=args.db_path,
+        benchmark_cache_dir=args.benchmark_cache_dir,
+        news_replay_path=args.news_replay_fixture,
+        shared_phase1_cache_dir=args.shared_phase1_cache_dir,
+        shared_analyst_cache_dir=args.shared_analyst_cache_dir,
+    )
+    report = run_fixed_backtest_cache_health(config)
+    payload = report.to_dict()
+    if args.json:
+        print(json.dumps(payload, sort_keys=True))
+    else:
+        print("QuantArena cache health")
+        print(f"profile: {payload['profile']}")
+        print(f"ok: {payload['ok']}")
+        for layer in payload["layers"]:
+            required = "required" if layer["required"] else "optional"
+            print(f"- {layer['name']}: {layer['status']} ({required})")
+            if layer.get("path"):
+                print(f"  path: {layer['path']}")
+        for finding in payload["findings"]:
+            print(f"finding: {finding['layer']} {finding['key']}: {finding['reason']}")
+    return 0 if report.ok or not args.strict else 1
 
 
 def run_paper_command(args: argparse.Namespace) -> int:
