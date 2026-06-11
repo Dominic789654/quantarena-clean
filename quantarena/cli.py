@@ -238,6 +238,45 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Exit non-zero when required cache health checks fail",
     )
+    cache_warmup_parser = cache_subparsers.add_parser(
+        "warmup",
+        help="Plan cache warmup actions",
+    )
+    cache_warmup_subparsers = cache_warmup_parser.add_subparsers(
+        dest="cache_warmup_profile",
+        required=True,
+    )
+    fixed_warmup_parser = cache_warmup_subparsers.add_parser(
+        "fixed-backtest",
+        help="Plan fixed backtest cache preparation",
+    )
+    fixed_warmup_parser.add_argument("--db-path", type=Path, default=Path("data/signal_flux.db"))
+    fixed_warmup_parser.add_argument(
+        "--benchmark-cache-dir",
+        type=Path,
+        default=Path("tests/fixtures/fixed_backtest_data/benchmark_cache"),
+    )
+    fixed_warmup_parser.add_argument(
+        "--news-replay-fixture",
+        type=Path,
+        default=Path("tests/fixtures/fixed_backtest_data/news_replay.jsonl"),
+    )
+    fixed_warmup_parser.add_argument(
+        "--shared-phase1-cache-dir",
+        type=Path,
+        default=Path("data/backtest/shared_phase1_artifacts"),
+    )
+    fixed_warmup_parser.add_argument(
+        "--shared-analyst-cache-dir",
+        type=Path,
+        default=Path("data/backtest/shared_analyst_cache"),
+    )
+    fixed_warmup_parser.add_argument("--json", action="store_true")
+    fixed_warmup_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero when required warmup actions remain",
+    )
 
     live_parser = subparsers.add_parser(
         "live",
@@ -405,6 +444,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "cache" and args.cache_command == "health":
         return run_cache_health_command(args)
+
+    if args.command == "cache" and args.cache_command == "warmup":
+        return run_cache_warmup_command(args)
 
     if args.command == "live":
         return run_live_command(args)
@@ -629,6 +671,40 @@ def run_cache_health_command(args: argparse.Namespace) -> int:
         for finding in payload["findings"]:
             print(f"finding: {finding['layer']} {finding['key']}: {finding['reason']}")
     return 0 if report.ok or not args.strict else 1
+
+
+def run_cache_warmup_command(args: argparse.Namespace) -> int:
+    """Run cache warmup planning from the canonical CLI."""
+    from quantarena.cache_health import FixedBacktestCacheHealthConfig
+    from quantarena.fixed_backtest_cache_warmup import build_fixed_backtest_cache_warmup_plan
+
+    if args.cache_warmup_profile != "fixed-backtest":
+        raise ValueError(f"unsupported cache warmup profile: {args.cache_warmup_profile}")
+    config = FixedBacktestCacheHealthConfig(
+        db_path=args.db_path,
+        benchmark_cache_dir=args.benchmark_cache_dir,
+        news_replay_path=args.news_replay_fixture,
+        shared_phase1_cache_dir=args.shared_phase1_cache_dir,
+        shared_analyst_cache_dir=args.shared_analyst_cache_dir,
+    )
+    plan = build_fixed_backtest_cache_warmup_plan(config)
+    payload = plan.to_dict()
+    if args.json:
+        print(json.dumps(payload, sort_keys=True))
+    else:
+        print("Fixed backtest cache warmup")
+        print(f"profile: {payload['profile']}")
+        print(f"dry_run: {payload['dry_run']}")
+        print(f"ok: {payload['ok']}")
+        if not payload["actions"]:
+            print("actions: none")
+        for action in payload["actions"]:
+            required = "required" if action["required"] else "optional"
+            print(f"- {action['layer']}: {action['reason']} ({required})")
+            if action.get("path"):
+                print(f"  path: {action['path']}")
+            print(f"  next: {action['recommended_command']}")
+    return 0 if plan.ok or not args.strict else 1
 
 
 def run_paper_command(args: argparse.Namespace) -> int:
