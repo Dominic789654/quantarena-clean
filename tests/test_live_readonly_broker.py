@@ -7,12 +7,15 @@ from pathlib import Path
 import pytest
 
 from trading import (
+    LiveReadonlyCredentialError,
     LiveReadonlyBrokerManager,
     LiveReadonlyConfig,
     LiveReadonlyConfigurationError,
     LiveReadonlyMutationError,
+    LiveReadonlyRateLimitError,
     SnapshotLiveReadonlyBrokerAdapter,
     create_live_readonly_adapter,
+    validate_live_readonly_provider_contract,
 )
 
 
@@ -121,6 +124,84 @@ def test_live_readonly_manager_exposes_capabilities_without_mutation_facade():
     ]
 
 
+def test_live_readonly_provider_contract_succeeds_for_snapshot_fixture():
+    adapter = SnapshotLiveReadonlyBrokerAdapter(FIXTURE_SNAPSHOT)
+
+    result = validate_live_readonly_provider_contract(adapter)
+
+    assert result.ok is True
+    assert result.provider == "snapshot"
+    assert result.readonly is True
+    assert result.mutation_allowed is False
+    assert result.category is None
+    assert [(check["command"], check["ok"], check["count"], check["category"]) for check in result.checks] == [
+        ("account", True, 1, None),
+        ("positions", True, 2, None),
+        ("orders", True, 2, None),
+        ("quotes", True, 2, None),
+    ]
+
+
+def test_live_readonly_manager_contract_returns_command_result():
+    manager = LiveReadonlyBrokerManager(
+        config=LiveReadonlyConfig(provider="snapshot", snapshot_path=FIXTURE_SNAPSHOT)
+    )
+
+    result = manager.contract()
+
+    assert result.ok is True
+    assert result.command == "contract"
+    assert result.error is None
+    assert result.result["provider"] == "snapshot"
+    assert result.result["readonly"] is True
+    assert result.result["mutation_allowed"] is False
+    assert [check["command"] for check in result.result["checks"]] == [
+        "account",
+        "positions",
+        "orders",
+        "quotes",
+    ]
+
+
+def test_live_readonly_provider_contract_reports_schema_failure():
+    adapter = _ContractProbeAdapter(account={"cash": 100.0})
+
+    result = validate_live_readonly_provider_contract(adapter)
+
+    assert result.ok is False
+    assert result.category == "schema_error"
+    assert result.failed_command == "account"
+    assert "account.total_value is required" in result.error
+    assert result.checks[0]["issues"] == [
+        "account.total_value is required",
+        "account.buying_power is required",
+        "account.currency is required",
+    ]
+
+
+def test_live_readonly_provider_contract_reports_credential_failure():
+    adapter = _ContractProbeAdapter(account_error=LiveReadonlyCredentialError("missing BROKER_API_KEY"))
+
+    result = validate_live_readonly_provider_contract(adapter)
+
+    assert result.ok is False
+    assert result.category == "credential_missing"
+    assert result.failed_command == "account"
+    assert result.error == "missing BROKER_API_KEY"
+
+
+def test_live_readonly_provider_contract_reports_rate_limit_failure():
+    adapter = _ContractProbeAdapter(positions_error=LiveReadonlyRateLimitError("provider rate limit exceeded"))
+
+    result = validate_live_readonly_provider_contract(adapter)
+
+    assert result.ok is False
+    assert result.category == "rate_limited"
+    assert result.failed_command == "positions"
+    assert result.error == "provider rate limit exceeded"
+    assert [check["command"] for check in result.checks] == ["account", "positions"]
+
+
 def test_live_readonly_adapter_rejects_mutations():
     snapshot = FIXTURE_SNAPSHOT
     adapter = SnapshotLiveReadonlyBrokerAdapter(snapshot)
@@ -141,3 +222,57 @@ def test_live_readonly_configuration_errors_are_explicit(tmp_path: Path):
 
     with pytest.raises(LiveReadonlyConfigurationError, match="unsupported"):
         create_live_readonly_adapter(LiveReadonlyConfig(provider="unknown", snapshot_path=tmp_path / "x.json"))
+
+
+class _ContractProbeAdapter:
+    provider = "probe"
+
+    def __init__(
+        self,
+        *,
+        account: dict | None = None,
+        account_error: Exception | None = None,
+        positions_error: Exception | None = None,
+    ):
+        self._account = account or {
+            "cash": 100.0,
+            "total_value": 125.0,
+            "buying_power": 100.0,
+            "currency": "USD",
+        }
+        self._account_error = account_error
+        self._positions_error = positions_error
+
+    def readonly_capabilities(self) -> dict:
+        return {
+            "provider": self.provider,
+            "readonly": True,
+            "mutation_allowed": False,
+            "read_operations": ["account", "positions", "orders", "quotes"],
+        }
+
+    def get_account(self) -> dict:
+        if self._account_error:
+            raise self._account_error
+        return self._account
+
+    def get_positions(self) -> list[dict]:
+        if self._positions_error:
+            raise self._positions_error
+        return [{"symbol": "AAPL", "shares": 1, "market_value": 101.0, "last_price": 101.0}]
+
+    def get_orders(self) -> list[dict]:
+        return [
+            {
+                "order_id": "probe-001",
+                "status": "filled",
+                "symbol": "AAPL",
+                "side": "BUY",
+                "shares": 1,
+                "filled_quantity": 1,
+                "remaining_quantity": 0,
+            }
+        ]
+
+    def get_quotes(self) -> dict[str, dict]:
+        return {"AAPL": {"symbol": "AAPL", "price": 101.0}}

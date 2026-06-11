@@ -15,6 +15,10 @@ DEFAULT_LIVE_READONLY_PROVIDER = "snapshot"
 LIVE_READONLY_PROVIDER_ENV = "QUANTARENA_LIVE_READONLY_PROVIDER"
 LIVE_READONLY_SNAPSHOT_ENV = "QUANTARENA_LIVE_READONLY_SNAPSHOT"
 LIVE_READONLY_READ_OPERATIONS = ("account", "positions", "orders", "quotes")
+LIVE_READONLY_ERROR_CREDENTIAL_MISSING = "credential_missing"
+LIVE_READONLY_ERROR_PROVIDER = "provider_error"
+LIVE_READONLY_ERROR_RATE_LIMITED = "rate_limited"
+LIVE_READONLY_ERROR_SCHEMA = "schema_error"
 
 
 class LiveReadonlyError(RuntimeError):
@@ -27,6 +31,14 @@ class LiveReadonlyConfigurationError(LiveReadonlyError):
 
 class LiveReadonlyMutationError(LiveReadonlyError):
     """Raised when a caller attempts to mutate through a read-only adapter."""
+
+
+class LiveReadonlyCredentialError(LiveReadonlyError):
+    """Raised when a provider is missing required credentials."""
+
+
+class LiveReadonlyRateLimitError(LiveReadonlyError):
+    """Raised when a provider rate limit blocks a read operation."""
 
 
 @dataclass(frozen=True)
@@ -71,6 +83,33 @@ class LiveReadonlyCommandResult:
             "result": self.result or {},
             "error": self.error,
         }
+
+
+@dataclass(frozen=True)
+class LiveReadonlyProviderContractResult:
+    """JSON-ready provider contract validation result."""
+
+    ok: bool
+    provider: str
+    readonly: bool
+    mutation_allowed: bool
+    checks: list[dict[str, Any]]
+    category: str | None = None
+    failed_command: str | None = None
+    error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "ok": self.ok,
+            "provider": self.provider,
+            "readonly": self.readonly,
+            "mutation_allowed": self.mutation_allowed,
+            "checks": self.checks,
+            "category": self.category,
+            "failed_command": self.failed_command,
+            "error": self.error,
+        }
+        return payload
 
 
 class SnapshotLiveReadonlyBrokerAdapter:
@@ -239,6 +278,15 @@ class LiveReadonlyBrokerManager:
             ),
         )
 
+    def contract(self) -> LiveReadonlyCommandResult:
+        contract_result = validate_live_readonly_provider_contract(self.adapter)
+        return LiveReadonlyCommandResult(
+            ok=contract_result.ok,
+            command="contract",
+            result={**self.readonly_capabilities(), **contract_result.to_dict()},
+            error=contract_result.error,
+        )
+
 
 def create_live_readonly_adapter(config: LiveReadonlyConfig) -> SnapshotLiveReadonlyBrokerAdapter:
     """Create the configured live read-only adapter."""
@@ -246,6 +294,73 @@ def create_live_readonly_adapter(config: LiveReadonlyConfig) -> SnapshotLiveRead
     if provider == "snapshot":
         return SnapshotLiveReadonlyBrokerAdapter(config.snapshot_path)
     raise LiveReadonlyConfigurationError(f"unsupported live read-only provider: {config.provider}")
+
+
+def validate_live_readonly_provider_contract(adapter: Any) -> LiveReadonlyProviderContractResult:
+    """Validate a live read-only provider against the broker-neutral read contract."""
+    capabilities = (
+        adapter.readonly_capabilities()
+        if hasattr(adapter, "readonly_capabilities")
+        else _readonly_capabilities(
+            provider=getattr(adapter, "provider", "unknown"),
+            snapshot_path=getattr(adapter, "snapshot_path", None),
+        )
+    )
+    provider = str(capabilities.get("provider") or getattr(adapter, "provider", "unknown"))
+    readonly = bool(capabilities.get("readonly") is True)
+    mutation_allowed = bool(capabilities.get("mutation_allowed") is True)
+    checks: list[dict[str, Any]] = []
+    read_plan = [
+        ("account", adapter.get_account),
+        ("positions", adapter.get_positions),
+        ("orders", adapter.get_orders),
+        ("quotes", adapter.get_quotes),
+    ]
+    for command, read_fn in read_plan:
+        check = _validate_provider_contract_read(command, read_fn)
+        checks.append(check)
+        if not check["ok"]:
+            return LiveReadonlyProviderContractResult(
+                ok=False,
+                provider=provider,
+                readonly=readonly,
+                mutation_allowed=mutation_allowed,
+                checks=checks,
+                category=check["category"],
+                failed_command=command,
+                error=check["error"],
+            )
+
+    capability_issues = _validate_contract_capabilities(capabilities)
+    if capability_issues:
+        checks.append(
+            {
+                "ok": False,
+                "command": "capabilities",
+                "category": LIVE_READONLY_ERROR_SCHEMA,
+                "count": 0,
+                "issues": capability_issues,
+                "error": "; ".join(capability_issues),
+            }
+        )
+        return LiveReadonlyProviderContractResult(
+            ok=False,
+            provider=provider,
+            readonly=readonly,
+            mutation_allowed=mutation_allowed,
+            checks=checks,
+            category=LIVE_READONLY_ERROR_SCHEMA,
+            failed_command="capabilities",
+            error="; ".join(capability_issues),
+        )
+
+    return LiveReadonlyProviderContractResult(
+        ok=True,
+        provider=provider,
+        readonly=readonly,
+        mutation_allowed=mutation_allowed,
+        checks=checks,
+    )
 
 
 def _readonly_capabilities(
@@ -262,6 +377,145 @@ def _readonly_capabilities(
     if snapshot_path is not None:
         capabilities["snapshot_path"] = str(snapshot_path)
     return capabilities
+
+
+def _validate_provider_contract_read(command: str, read_fn: Any) -> dict[str, Any]:
+    try:
+        payload = read_fn()
+    except Exception as exc:
+        category = _live_readonly_error_category(exc)
+        return {
+            "ok": False,
+            "command": command,
+            "category": category,
+            "count": 0,
+            "issues": [],
+            "error": str(exc),
+        }
+    issues = _validate_contract_payload(command, payload)
+    return {
+        "ok": not issues,
+        "command": command,
+        "category": None if not issues else LIVE_READONLY_ERROR_SCHEMA,
+        "count": _read_result_count(command, payload),
+        "issues": issues,
+        "error": None if not issues else "; ".join(issues),
+    }
+
+
+def _live_readonly_error_category(exc: Exception) -> str:
+    if isinstance(exc, LiveReadonlyCredentialError):
+        return LIVE_READONLY_ERROR_CREDENTIAL_MISSING
+    if isinstance(exc, LiveReadonlyRateLimitError):
+        return LIVE_READONLY_ERROR_RATE_LIMITED
+    if isinstance(exc, LiveReadonlyConfigurationError):
+        return LIVE_READONLY_ERROR_CREDENTIAL_MISSING
+    return LIVE_READONLY_ERROR_PROVIDER
+
+
+def _validate_contract_capabilities(capabilities: Mapping[str, Any]) -> list[str]:
+    issues: list[str] = []
+    if capabilities.get("readonly") is not True:
+        issues.append("capabilities.readonly must be true")
+    if capabilities.get("mutation_allowed") is not False:
+        issues.append("capabilities.mutation_allowed must be false")
+    operations = capabilities.get("read_operations")
+    if list(operations or []) != list(LIVE_READONLY_READ_OPERATIONS):
+        issues.append("capabilities.read_operations must list account, positions, orders, quotes")
+    return issues
+
+
+def _validate_contract_payload(command: str, payload: Any) -> list[str]:
+    if command == "account":
+        return _validate_mapping_fields(
+            "account",
+            payload,
+            {
+                "cash": (int, float),
+                "total_value": (int, float),
+                "buying_power": (int, float),
+                "currency": str,
+            },
+        )
+    if command == "positions":
+        return _validate_list_of_mappings(
+            "positions",
+            payload,
+            {
+                "symbol": str,
+                "shares": int,
+                "market_value": (int, float),
+                "last_price": (int, float),
+            },
+        )
+    if command == "orders":
+        return _validate_list_of_mappings(
+            "orders",
+            payload,
+            {
+                "order_id": object,
+                "status": object,
+                "symbol": str,
+                "side": object,
+                "shares": int,
+                "filled_quantity": int,
+                "remaining_quantity": int,
+            },
+        )
+    if command == "quotes":
+        issues: list[str] = []
+        if not isinstance(payload, Mapping):
+            return ["quotes must be an object keyed by symbol"]
+        for symbol, quote in payload.items():
+            quote_path = f"quotes.{symbol}"
+            issues.extend(
+                _validate_mapping_fields(
+                    quote_path,
+                    quote,
+                    {
+                        "symbol": str,
+                        "price": (int, float),
+                    },
+                )
+            )
+        return issues
+    return [f"unsupported contract command: {command}"]
+
+
+def _validate_mapping_fields(
+    path: str,
+    payload: Any,
+    fields: Mapping[str, type | tuple[type, ...]],
+) -> list[str]:
+    if not isinstance(payload, Mapping):
+        return [f"{path} must be an object"]
+    issues: list[str] = []
+    for field, expected_type in fields.items():
+        if field not in payload:
+            issues.append(f"{path}.{field} is required")
+            continue
+        value = payload[field]
+        if value is None:
+            issues.append(f"{path}.{field} must not be null")
+            continue
+        if expected_type is object:
+            continue
+        if not isinstance(value, expected_type):
+            issues.append(f"{path}.{field} has invalid type")
+    return issues
+
+
+def _validate_list_of_mappings(
+    path: str,
+    payload: Any,
+    fields: Mapping[str, type | tuple[type, ...]],
+) -> list[str]:
+    if not isinstance(payload, Sequence) or isinstance(payload, (str, bytes, bytearray)):
+        return [f"{path} must be a list"]
+    issues: list[str] = []
+    for index, item in enumerate(payload):
+        issues.extend(_validate_mapping_fields(f"{path}[{index}]", item, fields))
+    return issues
 
 
 def _run_smoke_step(command: str, read_fn: Any) -> dict[str, Any]:

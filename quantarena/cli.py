@@ -292,6 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Snapshot JSON path for the snapshot live read-only provider",
     )
     live_subparsers = live_parser.add_subparsers(dest="live_command", required=True)
+    live_subparsers.add_parser("contract", help="Validate the read-only live provider contract")
     live_subparsers.add_parser("smoke", help="Run a read-only live broker smoke check")
     live_subparsers.add_parser("account", help="Show live account snapshot")
     live_subparsers.add_parser("positions", help="Show live positions")
@@ -749,6 +750,8 @@ def run_live_command(args: argparse.Namespace) -> int:
 
 
 def _dispatch_live_command(manager: object, args: argparse.Namespace):
+    if args.live_command == "contract":
+        return manager.contract()
     if args.live_command == "smoke":
         return manager.smoke()
     if args.live_command == "account":

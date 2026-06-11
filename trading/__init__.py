@@ -14,14 +14,18 @@ from .live_readonly import (
     DEFAULT_LIVE_READONLY_PROVIDER,
     LIVE_READONLY_PROVIDER_ENV,
     LIVE_READONLY_SNAPSHOT_ENV,
+    LiveReadonlyCredentialError,
     LiveReadonlyBrokerManager,
     LiveReadonlyCommandResult,
     LiveReadonlyConfig,
     LiveReadonlyConfigurationError,
     LiveReadonlyError,
     LiveReadonlyMutationError,
+    LiveReadonlyProviderContractResult,
+    LiveReadonlyRateLimitError,
     SnapshotLiveReadonlyBrokerAdapter,
     create_live_readonly_adapter,
+    validate_live_readonly_provider_contract,
 )
 from .paper_broker import CancelResult, FillResult, PaperBroker
 from .paper_portfolio import (
@@ -55,8 +59,11 @@ __all__ = [
     "LiveReadonlyCommandResult",
     "LiveReadonlyConfig",
     "LiveReadonlyConfigurationError",
+    "LiveReadonlyCredentialError",
     "LiveReadonlyError",
     "LiveReadonlyMutationError",
+    "LiveReadonlyProviderContractResult",
+    "LiveReadonlyRateLimitError",
     "MarketSnapshot",
     "OrderIntent",
     "OrderSide",
@@ -77,4 +84,5 @@ __all__ = [
     "broker_to_state",
     "create_live_readonly_adapter",
     "reconcile_account",
+    "validate_live_readonly_provider_contract",
 ]
