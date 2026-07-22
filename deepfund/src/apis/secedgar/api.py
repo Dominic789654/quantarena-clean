@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+import warnings
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
@@ -44,6 +45,13 @@ class SECEdgarAPI:
     # Class-level cache shared across instances (submissions update slowly).
     _cache: Dict[str, tuple[float, Any]] = {}
     _cache_lock = threading.Lock()
+    MAX_CACHE_ENTRIES = 256
+
+    # Class-level throttle: analysts construct fresh Router/API instances per
+    # call and run concurrently, so per-instance state cannot enforce SEC's
+    # fair-access limit. Sleeping under the lock serializes bursts.
+    _throttle_lock = threading.Lock()
+    _last_request_ts = 0.0
 
     SUBMISSIONS_CACHE_TTL = 24 * 3600.0
     SEARCH_CACHE_TTL = 3600.0
@@ -62,35 +70,37 @@ class SECEdgarAPI:
         # Stay well below SEC's 10 req/s fair-access limit.
         self.min_request_interval = float(os.environ.get("SEC_EDGAR_MIN_INTERVAL", "0.15"))
         self.max_retries = 3
-        self._last_request_ts = 0.0
 
     # ------------------------------------------------------------------
     # HTTP helpers
     # ------------------------------------------------------------------
 
     def _throttle(self) -> None:
-        elapsed = time.monotonic() - self._last_request_ts
-        if elapsed < self.min_request_interval:
-            time.sleep(self.min_request_interval - elapsed)
+        with SECEdgarAPI._throttle_lock:
+            elapsed = time.monotonic() - SECEdgarAPI._last_request_ts
+            if elapsed < self.min_request_interval:
+                time.sleep(self.min_request_interval - elapsed)
+            SECEdgarAPI._last_request_ts = time.monotonic()
 
     def _request_json(self, url: str, params: Optional[Dict[str, Any]] = None) -> Any:
         """GET with throttling and backoff on transient SEC rejections."""
         last_error: Optional[Exception] = None
         for attempt in range(self.max_retries):
             self._throttle()
-            self._last_request_ts = time.monotonic()
             try:
                 response = self.session.get(url, params=params, timeout=self.timeout)
             except requests.exceptions.RequestException as exc:
                 last_error = exc
-                time.sleep(2 ** attempt)
+                if attempt < self.max_retries - 1:
+                    time.sleep(2 ** attempt)
                 continue
 
             if response.status_code in (429, 503):
                 last_error = requests.exceptions.HTTPError(
                     f"SEC EDGAR throttled request ({response.status_code})", response=response
                 )
-                time.sleep(2 ** attempt)
+                if attempt < self.max_retries - 1:
+                    time.sleep(2 ** attempt)
                 continue
 
             response.raise_for_status()
@@ -113,6 +123,8 @@ class SECEdgarAPI:
 
         data = self._request_json(url, params=params)
         with self._cache_lock:
+            while len(self._cache) >= self.MAX_CACHE_ENTRIES:
+                self._cache.pop(next(iter(self._cache)))
             self._cache[cache_key] = (now, data)
         return data
 
@@ -164,20 +176,35 @@ class SECEdgarAPI:
             url=self.SUBMISSIONS_URL.format(cik=norm_cik),
         )
 
-        recent = data.get("filings", {}).get("recent", {})
+        recent = (data.get("filings") or {}).get("recent") or {}
         form_list = recent.get("form", [])
         date_list = recent.get("filingDate", [])
         accession_list = recent.get("accessionNo", [])
         primary_docs = recent.get("primaryDocument", [])
+
+        # The submissions endpoint only exposes the ~1000 most recent filings;
+        # a trading_date older than that window would silently return nothing.
+        if trading_date and date_list:
+            oldest = self._parse_date(date_list[-1])
+            if oldest and oldest >= trading_date:
+                warnings.warn(
+                    f"SEC EDGAR recent-filings window for CIK {norm_cik} starts at "
+                    f"{date_list[-1]}, after trading_date {trading_date:%Y-%m-%d}; "
+                    "older 13F history is not fetched and results may be incomplete.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
         results: list[InstitutionalFiling] = []
         for i, form in enumerate(form_list):
             if form not in forms:
                 continue
             filing_date = date_list[i] if i < len(date_list) else ""
-            if trading_date and filing_date:
-                parsed = self._parse_date(filing_date)
-                if parsed and parsed > trading_date:
+            if trading_date:
+                # Strictly-before semantics matching the AlphaVantage insider
+                # filter; unparseable dates fail closed to avoid lookahead.
+                parsed = self._parse_date(filing_date) if filing_date else None
+                if parsed is None or parsed >= trading_date:
                     continue
             accession = accession_list[i] if i < len(accession_list) else ""
             results.append(InstitutionalFiling(
@@ -208,39 +235,60 @@ class SECEdgarAPI:
             days_back: Search window length in days.
             limit: Maximum number of filings to return.
         """
+        symbol = ticker.strip().upper()
         end = trading_date or datetime.now()
         start = end - timedelta(days=days_back)
         params = {
-            "q": ticker,
+            # Quoted phrase: an unquoted short token ("A", "ALL") full-text
+            # matches unrelated issuers' documents.
+            "q": f'"{symbol}"',
             "forms": "4",
             "dateRange": "custom",
             "startdt": start.strftime("%Y-%m-%d"),
             "enddt": end.strftime("%Y-%m-%d"),
         }
         data = self._cached_json(
-            cache_key=f"form4:{ticker}:{params['startdt']}:{params['enddt']}",
+            cache_key=f"form4:{symbol}:{params['startdt']}:{params['enddt']}",
             ttl=self.SEARCH_CACHE_TTL,
             url=self.FULL_TEXT_SEARCH_URL,
             params=params,
         )
 
         hits = data.get("hits", {}).get("hits", [])
-        results: list[InsiderFiling] = []
-        for hit in hits[:limit]:
+        issuer_marker = f"({symbol})"
+        candidates: list[tuple[datetime, InsiderFiling]] = []
+        for hit in hits:
             source = hit.get("_source", {})
+            display_names = list(source.get("display_names") or [])
+            # Full-text hits can come from any document mentioning the token;
+            # keep only filings whose issuer line carries the "(TICKER)" tag.
+            if not any(issuer_marker in name for name in display_names):
+                continue
+
+            filing_date = source.get("file_date")
+            parsed = self._parse_date(filing_date) if filing_date else None
+            if trading_date and (parsed is None or parsed >= trading_date):
+                continue  # strictly-before, fail closed on unparseable dates
+
             ciks = source.get("ciks") or []
             cik = str(ciks[0]) if ciks else None
             accession = source.get("adsh")
-            results.append(InsiderFiling(
-                ticker=ticker,
-                cik=cik,
-                filer_names=list(source.get("display_names") or []),
-                form=str(source.get("file_type") or "4"),
-                filing_date=source.get("file_date"),
-                accession_no=accession,
-                filing_url=self._build_filing_url(cik, accession) if cik else None,
+            candidates.append((
+                parsed or datetime.min,
+                InsiderFiling(
+                    ticker=symbol,
+                    cik=cik,
+                    filer_names=display_names,
+                    form=str(source.get("file_type") or "4"),
+                    filing_date=filing_date,
+                    accession_no=accession,
+                    filing_url=self._build_filing_url(cik, accession) if cik else None,
+                ),
             ))
-        return results
+
+        # EDGAR full-text search ranks by relevance, not recency.
+        candidates.sort(key=lambda pair: pair[0], reverse=True)
+        return [filing for _, filing in candidates[:limit]]
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -248,7 +296,7 @@ class SECEdgarAPI:
 
     @staticmethod
     def _build_filing_url(cik: Optional[str], accession_no: Optional[str]) -> Optional[str]:
-        if not cik or not accession_no:
+        if not cik or not accession_no or not str(cik).strip().isdigit():
             return None
         return SECEdgarAPI.ARCHIVE_INDEX_URL.format(
             cik=str(int(cik)),

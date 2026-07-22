@@ -173,7 +173,7 @@ class InsiderToolkit(Toolkit):
             filings = self._insider_tools.get_recent_insider_filings(
                 ticker, days_back=days_back, limit=count
             )
-        except RuntimeError as exc:
+        except Exception as exc:
             return f"获取 {ticker} 内幕交易失败: {exc}"
 
         if not filings:
@@ -206,10 +206,10 @@ class InsiderToolkit(Toolkit):
 
         try:
             filings = self._insider_tools.get_institution_13f(institution, limit=count)
-        except RuntimeError as exc:
-            return f"获取 {institution} 13F 失败: {exc}"
         except ValueError as exc:
             return f"无效的机构标识 {institution}: {exc}"
+        except Exception as exc:
+            return f"获取 {institution} 13F 失败: {exc}"
 
         if not filings:
             return f"{institution} 暂无 13F-HR filing"

@@ -11,6 +11,7 @@ def get_fin_researcher_instructions() -> str:
 1. **标的识别**: 识别信号中涉及的具体上市公司。必须调用 `search_ticker` 确认代码，并调用 `get_stock_price` 获取最新价格和近 30 天走势。
 2. **事实核查**: 使用 `web_search` 或 `fetch_news_content` 验证信号的真实性，并寻找更多细节（如公告原文、行业研报摘要）。
 3. **产业链梳理**: 补充该信号涉及的上下游环节及竞争格局。
+4. **美股内幕/机构线索（仅限美股标的）**: 若信号涉及美股，调用 `get_insider_filings` 查询该标的近期 Form 4 高管交易，必要时调用 `get_institution_13f` 查询知名机构（如 berkshire_hathaway、blackrock）的 13F 持仓报告。注意 13F 为季度快照且披露滞后最多45天，A股标的不要调用这两个工具。
 
 ### 2. 工具使用规范 (CRITICAL)
 - **每个提到的公司都需要调用工具**: 不能依赖记忆，必须实时查询。

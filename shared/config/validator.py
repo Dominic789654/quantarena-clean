@@ -141,6 +141,24 @@ ENV_REQUIREMENTS: List[EnvVarRequirement] = [
         used_in=["deepear", "deepfund", "backtest"],
     ),
     EnvVarRequirement(
+        name="SEC_EDGAR_USER_AGENT",
+        level=ValidationLevel.OPTIONAL,
+        description="User-Agent with contact info for SEC EDGAR 13F/Form 4 data, e.g. 'App/1.0 (email)'",
+        used_in=["deepear", "deepfund"],
+    ),
+    EnvVarRequirement(
+        name="SEC_EDGAR_MIN_INTERVAL",
+        level=ValidationLevel.OPTIONAL,
+        description="Minimum seconds between SEC EDGAR requests (default 0.15)",
+        used_in=["deepear", "deepfund"],
+    ),
+    EnvVarRequirement(
+        name="APEWISDOM_MIN_INTERVAL",
+        level=ValidationLevel.OPTIONAL,
+        description="Minimum seconds between ApeWisdom requests (default 1.0)",
+        used_in=["deepfund"],
+    ),
+    EnvVarRequirement(
         name="COMPANY_NEWS_PROVIDER",
         level=ValidationLevel.OPTIONAL,
         description="DeepFund company news provider (default, replay, replay_strict, tavily, tavily_strict, akshare, akshare_strict, auto)",
