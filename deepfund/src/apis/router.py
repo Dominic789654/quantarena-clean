@@ -5,7 +5,15 @@ import os
 import time
 from typing import Any, Dict, Optional
 
-from apis import YFinanceAPI, AlphaVantageAPI, FMPAPI, TavilyNewsAPI, AKShareNewsAPI
+from apis import (
+    YFinanceAPI,
+    AlphaVantageAPI,
+    FMPAPI,
+    TavilyNewsAPI,
+    AKShareNewsAPI,
+    SECEdgarAPI,
+    ApeWisdomAPI,
+)
 from apis.common_model import MediaNews
 from backtest.providers import FileReplayNewsProvider, ProviderDataError
 from apis.tushare import TushareAPI
@@ -137,6 +145,8 @@ class Router():
         self._tavily_news_api = None
         self._akshare_news_api = None
         self._replay_news_api = None
+        self._secedgar_api = None
+        self._apewisdom_api = None
         self._news_provider = (news_provider or os.getenv("COMPANY_NEWS_PROVIDER", "default")).strip().lower()
 
         if source == APISource.YFINANCE:
@@ -197,6 +207,16 @@ class Router():
         if self._akshare_news_api is None:
             self._akshare_news_api = AKShareNewsAPI()
         return self._akshare_news_api
+
+    def _get_secedgar_api(self) -> SECEdgarAPI:
+        if self._secedgar_api is None:
+            self._secedgar_api = SECEdgarAPI()
+        return self._secedgar_api
+
+    def _get_apewisdom_api(self) -> ApeWisdomAPI:
+        if self._apewisdom_api is None:
+            self._apewisdom_api = ApeWisdomAPI()
+        return self._apewisdom_api
 
     def _call_with_stats(self, category: str, func, *args, **kwargs):
         if not STATS_AVAILABLE:
@@ -377,6 +397,30 @@ class Router():
     @track_api_call()
     def get_us_economic_indicators(self):
         return self.api.get_economic_indicators()
+
+    @track_api_call(category="secedgar")
+    def get_us_institutional_filings(self, cik, trading_date=None, forms=("13F-HR",), limit=10):
+        """13F-style institutional filings from SEC EDGAR (source-independent)."""
+        return self._get_secedgar_api().get_institutional_filings(
+            cik, forms=forms, trading_date=trading_date, limit=limit
+        )
+
+    @track_api_call(category="secedgar")
+    def get_us_insider_filings(self, ticker, trading_date=None, days_back=45, limit=20):
+        """Form 4 insider filings from SEC EDGAR (source-independent)."""
+        return self._get_secedgar_api().get_insider_filings(
+            ticker, trading_date=trading_date, days_back=days_back, limit=limit
+        )
+
+    @track_api_call(category="apewisdom")
+    def get_us_social_trending(self, filter_key="wallstreetbets", limit=None):
+        """Reddit mention ranking from ApeWisdom (source-independent)."""
+        return self._get_apewisdom_api().get_trending(filter_key=filter_key, limit=limit)
+
+    @track_api_call(category="apewisdom")
+    def get_us_social_ticker_mentions(self, ticker, filter_key="wallstreetbets"):
+        """One ticker's Reddit mention stats from ApeWisdom (source-independent)."""
+        return self._get_apewisdom_api().get_ticker_mentions(ticker, filter_key=filter_key)
 
     def get_cn_stock_news(self, ticker, trading_date, news_count):
         if self._should_use_replay_news():
