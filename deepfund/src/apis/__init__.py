@@ -42,3 +42,13 @@ try:
     from apis.akshare import AKShareNewsAPI
 except Exception as exc:  # pragma: no cover
     AKShareNewsAPI = _missing_provider("AKShareNews", exc)
+
+try:
+    from apis.secedgar import SECEdgarAPI
+except Exception as exc:  # pragma: no cover
+    SECEdgarAPI = _missing_provider("SECEdgar", exc)
+
+try:
+    from apis.apewisdom import ApeWisdomAPI
+except Exception as exc:  # pragma: no cover
+    ApeWisdomAPI = _missing_provider("ApeWisdom", exc)
