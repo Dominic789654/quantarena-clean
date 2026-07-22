@@ -37,6 +37,7 @@ def test_backtest_engine_default_run_ids_are_unique_for_rapid_finalize_calls(mon
         engine.tracker = PortfolioTracker(initial_cash=100000.0)
         engine.tracker.record_snapshot("2026-01-02", 100000.0, positions={}, prices={})
         engine.reporter = _Reporter()
+        engine.broker_audit_events = []
         return engine
 
     monkeypatch.setattr(BacktestEngine, "_get_final_prices", lambda self, last_date: {"AAPL": 100.0})

@@ -19,8 +19,8 @@ workflow_analysts:
   - technical
   - insider
 
-# YiZhan is a unified API proxy for all LLM models
-# Using deepseek-v3.2 model
+# DeepSeek official API (matches the REASONING_MODEL_* stack in .env)
+# Using deepseek-v4-flash model
 llm:
-  provider: "YiZhan"
-  model: "deepseek-v3.2"
+  provider: "DeepSeek"
+  model: "deepseek-v4-flash"

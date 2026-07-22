@@ -31,5 +31,5 @@ momentum:
 
 # LLM settings
 llm:
-  provider: "YiZhan"
-  model: "deepseek-v3.2"
+  provider: "DeepSeek"
+  model: "deepseek-v4-flash"

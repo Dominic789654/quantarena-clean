@@ -16,9 +16,11 @@ def test_default_dependencies_keep_backtest_reports_complete_without_ml_stack():
     assert "matplotlib" in dependencies
     assert "ddgs" in dependencies
     assert "baidusearch" in dependencies
-    assert "pycountry" in dependencies
     assert "rank-bm25" in dependencies
     assert "markdown" in dependencies
+    # Dropped: no tracked code imports these (httpx arrives transitively).
+    assert "pycountry" not in dependencies
+    assert "httpx" not in dependencies
     assert "torch" not in dependencies
     assert "transformers" not in dependencies
     assert "sentence-transformers" not in dependencies

@@ -31,6 +31,7 @@ def _make_engine_stub(
         else {ticker: {"shares": 0, "value": 0.0} for ticker in tickers},
     }
     engine.tracker = _DummyTracker()
+    engine.broker_audit_events = []
     return engine
 
 
