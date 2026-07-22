@@ -77,8 +77,10 @@ def _mock_response(payload, status_code=200):
 @pytest.fixture(autouse=True)
 def clear_apewisdom_cache():
     ApeWisdomAPI.clear_cache()
+    ApeWisdomAPI._last_request_ts = 0.0
     yield
     ApeWisdomAPI.clear_cache()
+    ApeWisdomAPI._last_request_ts = 0.0
 
 
 def test_get_trending_parses_and_normalizes():
@@ -107,6 +109,66 @@ def test_get_trending_respects_limit():
 
     assert len(mentions) == 1
     assert mentions[0].ticker == "MU"
+
+
+def test_get_trending_limit_zero_returns_empty():
+    api = _make_api()
+    api.session.get = Mock(return_value=_mock_response(PAGE1_FIXTURE))
+
+    assert api.get_trending(limit=0) == []
+
+
+def test_invalid_filter_key_raises_before_any_request():
+    api = _make_api()
+    api.session.get = Mock()
+
+    with pytest.raises(ValueError, match="Invalid ApeWisdom filter"):
+        api.get_trending(filter_key="wallstreetbets/page/2")
+    with pytest.raises(ValueError, match="must be >= 1"):
+        api.get_trending(page=0)
+    api.session.get.assert_not_called()
+
+
+def test_null_pages_field_stops_pagination_gracefully():
+    api = _make_api()
+    fixture = dict(PAGE1_FIXTURE, pages=None)
+    api.session.get = Mock(return_value=_mock_response(fixture))
+
+    mention = api.get_ticker_mentions("ZZZZ", max_pages=5)
+
+    assert mention is None
+    assert api.session.get.call_count == 1
+
+
+def test_cache_expires_after_ttl(monkeypatch):
+    api = _make_api()
+    api.session.get = Mock(return_value=_mock_response(PAGE1_FIXTURE))
+
+    base = 1_000_000.0
+    monkeypatch.setattr("time.time", lambda: base)
+    api.get_trending()
+    monkeypatch.setattr("time.time", lambda: base + api.CACHE_TTL + 1)
+    api.get_trending()
+
+    assert api.session.get.call_count == 2
+
+
+def test_throttle_is_shared_across_instances(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
+
+    first = _make_api()
+    first.min_request_interval = 5.0
+    first.session.get = Mock(return_value=_mock_response(PAGE1_FIXTURE))
+    first.get_trending()
+    assert sleeps == []
+
+    second = _make_api()  # fresh instance, as analyst calls create
+    second.min_request_interval = 5.0
+    second.session.get = Mock(return_value=_mock_response(PAGE2_FIXTURE))
+    second.get_trending(page=2)
+
+    assert len(sleeps) == 1 and 0 < sleeps[0] <= 5.0
 
 
 def test_trending_page_is_cached():

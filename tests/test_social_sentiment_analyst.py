@@ -99,6 +99,61 @@ def test_build_prompt_includes_data_and_output_format():
     assert "signal" in prompt  # ANALYST_OUTPUT_FORMAT appended
 
 
+from unittest.mock import patch  # noqa: E402
+
+
+@patch("deepfund.src.agents.analysts.base.get_db")
+@patch("deepfund.src.agents.analysts.base.agent_call")
+@patch("deepfund.src.agents.analysts.base.Router")
+def test_analyze_end_to_end(mock_router_cls, mock_agent_call, mock_get_db):
+    """Pin the full wiring: thresholds -> router fetch -> prompt -> signal."""
+    from deepfund.src.graph.schema import AnalystSignal, Portfolio
+    from deepfund.src.graph.constants import Signal
+
+    mock_get_db.return_value = Mock()
+    mock_router_cls.return_value = _make_router()
+    mock_agent_call.return_value = AnalystSignal(
+        signal=Signal.BULLISH, justification="strong retail momentum"
+    )
+
+    state = {
+        "ticker": "MU",
+        "trading_date": "2026-07-22",
+        "market": "us",
+        "exp_name": "test",
+        "portfolio": Portfolio(id="p1", cashflow=1000.0, positions={}),
+        "llm_config": {"provider": "test", "model": "test"},
+        "skip_db_writes": True,
+    }
+    result = SocialSentimentAnalyst().analyze(state)
+
+    assert result["analyst_signals"][0].signal == Signal.BULLISH
+    call_kwargs = mock_agent_call.call_args.kwargs
+    assert call_kwargs["agent_name"] == AgentKey.SOCIAL_SENTIMENT
+    assert "474 mentions" in call_kwargs["prompt"]
+
+
+def test_fetch_data_warns_on_historical_trading_date():
+    """Historical backtests get current Reddit data — must be flagged, not silent."""
+    from datetime import datetime
+
+    analyst = SocialSentimentAnalyst()
+    router = _make_router()
+
+    with patch("deepfund.src.agents.analysts.social_sentiment.logger") as mock_logger:
+        recent_state = _make_state()
+        recent_state["trading_date"] = datetime.now().strftime("%Y-%m-%d")
+        data = analyst.fetch_data(recent_state, router)
+        assert not mock_logger.warning.called  # today's date: no lookahead
+
+        old_state = _make_state()
+        old_state["trading_date"] = "2025-01-06"
+        analyst.fetch_data(old_state, router)
+        assert mock_logger.warning.called
+
+    assert data["ticker_stats"]  # the warning never blocks data
+
+
 def test_behavioral_momentum_config_includes_social_sentiment():
     import yaml
     from pathlib import Path

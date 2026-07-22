@@ -57,16 +57,18 @@ def test_get_institution_13f_returns_dicts():
     assert filings == [F13.model_dump()]
 
 
-def test_init_failure_is_lazy_and_remembered(monkeypatch):
-    """Missing SEC_EDGAR_USER_AGENT must not break toolkit construction."""
+def test_init_failure_is_lazy_and_retried(monkeypatch):
+    """Missing SEC_EDGAR_USER_AGENT must not break toolkit construction, and a
+    later env fix must take effect without recreating the tools object."""
     monkeypatch.delenv("SEC_EDGAR_USER_AGENT", raising=False)
     tools = InsiderTools()  # must not raise
 
     with pytest.raises(RuntimeError, match="SEC EDGAR unavailable"):
         tools.get_recent_insider_filings("NVDA")
-    # Second call hits the remembered error without re-importing.
-    with pytest.raises(RuntimeError, match="SEC EDGAR unavailable"):
-        tools.get_institution_13f("blackrock")
+
+    monkeypatch.setenv("SEC_EDGAR_USER_AGENT", "QuantArenaTest/1.0 (test@example.com)")
+    api = tools._get_api()  # construction retried, now succeeds
+    assert api is not None
 
 
 def _pop_module_stubs() -> dict:
@@ -133,3 +135,17 @@ class TestInsiderToolkit:
 
         assert "失败" in text
         assert "SEC EDGAR unavailable" in text
+
+    def test_http_error_degrades_to_error_string(self, toolkit):
+        """Any upstream exception (e.g. SEC 403 ban page) must stay inside the tool."""
+        import requests
+
+        toolkit._insider_tools._api.get_insider_filings.side_effect = (
+            requests.exceptions.HTTPError("403 Client Error")
+        )
+        toolkit._insider_tools._api.get_institutional_filings.side_effect = (
+            requests.exceptions.HTTPError("403 Client Error")
+        )
+
+        assert "失败" in toolkit.get_insider_filings("NVDA")
+        assert "失败" in toolkit.get_institution_13f("blackrock")
