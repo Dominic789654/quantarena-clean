@@ -41,6 +41,9 @@ dependencies = [
     "tavily-python",
     "ddgs",
     "baidusearch",
+    # agno.tools.baidusearch imports pycountry at runtime but agno does not
+    # declare it; without this pin fresh installs break (caught by CI).
+    "pycountry",
 
     # Sentiment/ML
     "scikit-learn",
