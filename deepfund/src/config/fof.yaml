@@ -20,10 +20,10 @@ workflow_analysts:
   - technical
   - insider
 
-# Volcengine Ark API with deepseek-v3.2
+# DeepSeek official API with deepseek-v4-flash
 llm:
-  provider: "Ark"
-  model: "deepseek-v3.2"
+  provider: "DeepSeek"
+  model: "deepseek-v4-flash"
 
 # Data source settings for US market
 api_source:

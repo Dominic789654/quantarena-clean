@@ -15,10 +15,7 @@ import os
 # Add the deepfund/src directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'deepfund', 'src'))
 
-# Mock supabase before importing threshold_config
-sys.modules['supabase'] = MagicMock()
-
-# Now import threshold_config
+# Import threshold_config (depends only on yaml + loguru, both core deps)
 from util.threshold_config import (
     ThresholdConfig,
     get_threshold_config,

@@ -34,7 +34,6 @@ dependencies = [
     # Web/API
     "fastapi",
     "uvicorn",
-    "httpx",
 
     # Agents/Tools
     "agno",
@@ -42,7 +41,6 @@ dependencies = [
     "tavily-python",
     "ddgs",
     "baidusearch",
-    "pycountry",
 
     # Sentiment/ML
     "scikit-learn",

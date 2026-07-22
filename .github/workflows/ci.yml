@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package with dev dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint (fatal rules gate)
+        # Syntax errors, undefined names, and comparison bugs fail the build.
+        # The full ruleset still has legacy findings; it runs report-only below.
+        run: ruff check . --select E9,F63,F7,F82
+
+      - name: Lint (full report, informational)
+        run: ruff check . --exit-zero --statistics
+
+      - name: Repository smoke check
+        run: python -m quantarena.cli smoke --json
+
+      - name: Run test suite
+        run: pytest tests/ -q

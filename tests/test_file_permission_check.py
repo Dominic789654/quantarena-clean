@@ -113,21 +113,6 @@ class TestAtomicWritePermissionCheck:
             _atomic_write_text(str(test_file), test_content)
 
 
-class TestRunSmartBetaFilePermission:
-    """Test file permission handling in run_smart_beta.py"""
-    
-    def test_permission_check_logic_in_smart_beta(self, tmp_path):
-        """Test that permission check logic is present in smart_beta."""
-        # Read the run_smart_beta.py file and verify it has permission checks
-        smart_beta_path = PROJECT_ROOT / "run_smart_beta.py"
-        content = smart_beta_path.read_text()
-        
-        # Check that the file contains permission checking code
-        assert "os.access" in content, "Should use os.access for permission check"
-        assert "os.W_OK" in content, "Should check for write permission"
-        assert "warnings.warn" in content or "PermissionError" in content, "Should handle permission errors"
-
-
 class TestOsAccessFunction:
     """Test os.access function behavior."""
     

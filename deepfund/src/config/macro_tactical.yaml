@@ -22,8 +22,8 @@ workflow_analysts:
 
 # LLM settings
 llm:
-  provider: "Ark"
-  model: "deepseek-v3.2"
+  provider: "DeepSeek"
+  model: "deepseek-v4-flash"
 
 # Backtest-oriented tactical overlay settings
 macro_tactical:

@@ -7,6 +7,40 @@ import json
 import sys
 import types
 
+import pytest
+
+# Every module this file stubs into sys.modules. The autouse fixture below
+# restores them so later test files import the real modules, not our stubs.
+_STUBBED_MODULE_PREFIXES = (
+    "agno",
+    "deepear.src.utils.hybrid_search",
+    "deepear.src.utils.search_tools",
+)
+
+
+def _matches_stubbed_prefix(name: str) -> bool:
+    return any(
+        name == prefix or name.startswith(prefix + ".")
+        for prefix in _STUBBED_MODULE_PREFIXES
+    )
+
+
+@pytest.fixture(autouse=True)
+def _restore_stubbed_modules():
+    """Snapshot and restore sys.modules entries this file replaces with stubs."""
+    saved = {
+        name: module
+        for name, module in sys.modules.items()
+        if _matches_stubbed_prefix(name)
+    }
+    yield
+    for name in [n for n in sys.modules if _matches_stubbed_prefix(n)]:
+        if name in saved:
+            sys.modules[name] = saved.pop(name)
+        else:
+            del sys.modules[name]
+    sys.modules.update(saved)
+
 
 def _install_search_tools_dependency_stubs() -> None:
     """Install stubs required to import deepear search tools in test env."""

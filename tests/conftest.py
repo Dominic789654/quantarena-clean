@@ -57,6 +57,30 @@ from shared.utils.path_manager import setup_paths
 setup_paths()
 
 
+# Env vars that change provider routing or credentials. Modules under test
+# call load_dotenv() at import time, so a developer's .env (or shell) leaks
+# into os.environ and silently flips routing-dependent assertions. Scrub them
+# before every test; tests that need one set it explicitly via monkeypatch.
+_AMBIENT_ENV_VARS = [
+    "DEEPFUND_US_API_SOURCE",
+    "COMPANY_NEWS_PROVIDER",
+    "COMPANY_NEWS_REPLAY_PATH",
+    "FMP_API_KEY",
+    "ALPHA_VANTAGE_API_KEY",
+    "TAVILY_API_KEY",
+    "TUSHARE_API_KEY",
+    "SEC_EDGAR_USER_AGENT",
+    "MACARON_API_KEY",
+]
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ambient_env(monkeypatch):
+    """Keep ambient .env / shell state from leaking into test assertions."""
+    for var in _AMBIENT_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
 @pytest.fixture
 def mock_db():
     """Create a mock database instance."""

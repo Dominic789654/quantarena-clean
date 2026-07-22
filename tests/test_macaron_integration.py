@@ -181,6 +181,7 @@ def test_call_macaron_json_handles_event_transcript(monkeypatch):
             )
 
     monkeypatch.setattr(macaron_responses.requests, "post", lambda *args, **kwargs: _Response())
+    monkeypatch.setenv("MACARON_API_KEY", "test-key")
 
     parsed, raw = macaron_responses.call_macaron_json(
         "Return pong as JSON.",

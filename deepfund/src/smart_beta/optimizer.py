@@ -7,7 +7,10 @@ Implements quadratic programming optimization for Smart Beta strategies:
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .factor_engine import FactorData
 import numpy as np
 import pandas as pd
 from datetime import datetime
