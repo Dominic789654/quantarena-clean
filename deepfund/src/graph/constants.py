@@ -6,6 +6,7 @@ class AgentKey:
     FUNDAMENTAL = "fundamental"
     INSIDER = "insider"
     COMPANY_NEWS = "company_news"
+    SOCIAL_SENTIMENT = "social_sentiment"
     MACROECONOMIC = "macroeconomic"
     POLICY = "policy"
     DEEPEAR_INTELLIGENCE = "deepear_intelligence"

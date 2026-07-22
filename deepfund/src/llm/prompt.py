@@ -43,6 +43,19 @@ Here are recent {num_trades} insider trades:
 
 """ + ANALYST_OUTPUT_FORMAT
 
+SOCIAL_SENTIMENT_PROMPT = """
+You are a retail social-sentiment analyst evaluating ticker based on Reddit community mention statistics (e.g. r/wallstreetbets).
+
+Mention statistics for the ticker:
+{ticker_stats}
+
+Top trending tickers right now, for market-attention context:
+{trending}
+
+Consider the crowd-attention level, the 24-hour momentum in mentions, and contrarian risk when attention is extreme or fading.
+
+""" + ANALYST_OUTPUT_FORMAT
+
 COMPANY_NEWS_PROMPT = """
 You are a company news analyst evaluating ticker based on recent news. Title, publisher, and publish time are provided.
 

@@ -88,6 +88,7 @@ class ThresholdConfig:
             "policy": {"news_count": 10},
             "company_news": {"news_count": 10},
             "insider": {"num_trades": 10},
+            "social_sentiment": {"filter_key": "wallstreetbets", "trending_top_n": 10},
             "default": {"news_count": 10, "lookback_days": 30}
         }
 

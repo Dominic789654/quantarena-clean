@@ -53,6 +53,12 @@ company_news:
 insider:
   num_trades: 10  # Number of insider trades to analyze
 
+# Social Sentiment Analyst Thresholds
+# Used by: deepfund/src/agents/analysts/social_sentiment.py
+social_sentiment:
+  filter_key: wallstreetbets  # ApeWisdom community filter
+  trending_top_n: 10          # Trending tickers shown for market context
+
 # Default thresholds for analysts without specific config
 default:
   news_count: 10

@@ -3,6 +3,7 @@ from .fundamental import fundamental_agent, FundamentalAnalyst
 from .technical import technical_agent, TechnicalAnalyst
 from .company_news import company_news_agent, CompanyNewsAnalyst
 from .insider import insider_agent, InsiderAnalyst
+from .social_sentiment import social_sentiment_agent, SocialSentimentAnalyst
 from .macroeconomic import macroeconomic_agent, MacroeconomicAnalyst
 from .policy import policy_agent, PolicyAnalyst
 from .deepear_intelligence import deepear_intelligence_agent, DeepEarIntelligenceAnalyst
@@ -16,6 +17,7 @@ __all__ = [
     # Agent functions
     "technical_agent",
     "insider_agent",
+    "social_sentiment_agent",
     "company_news_agent",
     "fundamental_agent",
     "macroeconomic_agent",
@@ -26,6 +28,7 @@ __all__ = [
     "TechnicalAnalyst",
     "CompanyNewsAnalyst",
     "InsiderAnalyst",
+    "SocialSentimentAnalyst",
     "MacroeconomicAnalyst",
     "PolicyAnalyst",
     "DeepEarIntelligenceAnalyst",

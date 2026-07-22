@@ -16,6 +16,7 @@ tickers:
 workflow_analysts:
   - technical
   - company_news
+  - social_sentiment
   - deepear_intelligence
 
 momentum:
