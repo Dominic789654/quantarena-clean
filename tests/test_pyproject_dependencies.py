@@ -16,10 +16,12 @@ def test_default_dependencies_keep_backtest_reports_complete_without_ml_stack():
     assert "matplotlib" in dependencies
     assert "ddgs" in dependencies
     assert "baidusearch" in dependencies
+    # Undeclared runtime requirement of agno.tools.baidusearch — removing it
+    # breaks fresh installs even though no tracked code imports it directly.
+    assert "pycountry" in dependencies
     assert "rank-bm25" in dependencies
     assert "markdown" in dependencies
-    # Dropped: no tracked code imports these (httpx arrives transitively).
-    assert "pycountry" not in dependencies
+    # Dropped: no tracked code imports it and agno/openai/supabase declare it.
     assert "httpx" not in dependencies
     assert "torch" not in dependencies
     assert "transformers" not in dependencies
