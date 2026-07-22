@@ -2,6 +2,7 @@ from typing import Dict, Callable, List
 from agents.analysts import (
     technical_agent,
     insider_agent,
+    social_sentiment_agent,
     company_news_agent,
     fundamental_agent,
     macroeconomic_agent,
@@ -23,6 +24,7 @@ class AgentRegistry:
         AgentKey.TECHNICAL,
         AgentKey.FUNDAMENTAL,
         AgentKey.INSIDER,
+        AgentKey.SOCIAL_SENTIMENT,
         AgentKey.COMPANY_NEWS,
         AgentKey.MACROECONOMIC,
         AgentKey.POLICY,
@@ -82,6 +84,12 @@ class AgentRegistry:
             key=AgentKey.INSIDER,
             agent_func=insider_agent,
             agent_doc="Insider trading specialist analyzing insider activity patterns."
+        )
+
+        cls.register_agent(
+            key=AgentKey.SOCIAL_SENTIMENT,
+            agent_func=social_sentiment_agent,
+            agent_doc="Retail social-sentiment specialist analyzing Reddit mention rankings and attention momentum."
         )
 
         cls.register_agent(

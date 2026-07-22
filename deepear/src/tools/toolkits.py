@@ -12,6 +12,7 @@ from deepear.src.utils.news_tools import NewsNowTools, PolymarketTools
 from deepear.src.utils.stock_tools import StockTools
 from deepear.src.utils.search_tools import SearchTools
 from deepear.src.utils.sentiment_tools import SentimentTools
+from deepear.src.utils.insider_tools import InsiderTools
 
 
 class NewsToolkit(Toolkit):
@@ -136,6 +137,91 @@ class NewsToolkit(Toolkit):
         logger.info(f"✅ [TOOL SUCCESS] Enriched {updated_count} news items with content")
         
         return f"✅ 已为 {updated_count} 条新闻补充正文内容"
+
+
+class InsiderToolkit(Toolkit):
+    """
+    内幕交易工具包 - 包装 InsiderTools 为 Agno Toolkit
+
+    提供美股 Form 4 高管交易与 13F 机构持仓查询（SEC EDGAR 免费数据）
+    """
+
+    def __init__(self, **kwargs):
+        self._insider_tools = InsiderTools()
+
+        tools = [
+            self.get_insider_filings,
+            self.get_institution_13f,
+        ]
+        super().__init__(name="insider_toolkit", tools=tools, **kwargs)
+
+    def get_insider_filings(self, ticker: str, days_back: int = 30, count: int = 10) -> str:
+        """
+        查询某美股 ticker 近期的 Form 4 高管内幕交易 filing。
+
+        Args:
+            ticker: 美股代码，如 "NVDA"、"AAPL"。
+            days_back: 回看天数，默认 30 天。
+            count: 返回条数上限，默认 10 条。
+
+        Returns:
+            高管交易 filing 列表文本（日期、申报人、链接）。数据源不可用时返回错误信息。
+        """
+        logger.info(f"🔧 [TOOL CALLED] get_insider_filings(ticker={ticker}, days_back={days_back})")
+
+        try:
+            filings = self._insider_tools.get_recent_insider_filings(
+                ticker, days_back=days_back, limit=count
+            )
+        except RuntimeError as exc:
+            return f"获取 {ticker} 内幕交易失败: {exc}"
+
+        if not filings:
+            return f"{ticker} 近 {days_back} 天无 Form 4 高管交易 filing"
+
+        result = f"## {ticker} Form 4 高管交易 (近 {days_back} 天)\n\n"
+        for i, f in enumerate(filings, 1):
+            names = ", ".join(f.get("filer_names") or []) or "未知申报人"
+            result += f"{i}. {f.get('filing_date', 'N/A')} | {names}\n"
+            if f.get("filing_url"):
+                result += f"   链接: {f['filing_url']}\n"
+
+        logger.info(f"✅ [TOOL SUCCESS] Got {len(filings)} Form 4 filings for {ticker}")
+        return result
+
+    def get_institution_13f(self, institution: str, count: int = 5) -> str:
+        """
+        查询知名机构最近的 13F-HR 持仓报告 filing。
+
+        Args:
+            institution: 机构别名或 CIK。支持别名: "berkshire_hathaway", "bridgewater",
+                "blackrock", "renaissance_technologies", "soros_fund_management",
+                "tiger_global", "pershing_square", "appaloosa"；也可直接传 CIK 数字。
+            count: 返回条数上限，默认 5 条。
+
+        Returns:
+            13F filing 列表文本（表单、日期、链接）。注意 13F 有最多 45 天披露滞后。
+        """
+        logger.info(f"🔧 [TOOL CALLED] get_institution_13f(institution={institution})")
+
+        try:
+            filings = self._insider_tools.get_institution_13f(institution, limit=count)
+        except RuntimeError as exc:
+            return f"获取 {institution} 13F 失败: {exc}"
+        except ValueError as exc:
+            return f"无效的机构标识 {institution}: {exc}"
+
+        if not filings:
+            return f"{institution} 暂无 13F-HR filing"
+
+        result = f"## {institution} 13F-HR 持仓报告 (季度快照，披露滞后最多45天)\n\n"
+        for i, f in enumerate(filings, 1):
+            result += f"{i}. {f.get('filing_date', 'N/A')} | {f.get('form', '13F-HR')}\n"
+            if f.get("filing_url"):
+                result += f"   链接: {f['filing_url']}\n"
+
+        logger.info(f"✅ [TOOL SUCCESS] Got {len(filings)} 13F filings for {institution}")
+        return result
 
 
 class PolymarketToolkit(Toolkit):
