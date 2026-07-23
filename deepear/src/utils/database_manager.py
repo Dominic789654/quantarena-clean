@@ -6,6 +6,8 @@ from typing import List, Dict, Optional, Any, Union
 import pandas as pd
 from loguru import logger
 
+from shared.db import configure_sqlite_connection, ensure_parent_dir
+
 
 class DatabaseManager:
     """
@@ -37,8 +39,9 @@ class DatabaseManager:
         if self._conn is not None:
             return
             
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_parent_dir(self.db_path)
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        configure_sqlite_connection(self._conn)
         self._conn.row_factory = sqlite3.Row
         self._init_db()
         logger.info(f"💾 Database connected: {self.db_path}")
