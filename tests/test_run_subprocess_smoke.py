@@ -22,10 +22,9 @@ def test_check_env_exits_zero_via_real_subprocess():
     """`python run.py --check-env` must exit 0 when run as a real script.
 
     This exercises run.py's actual `if __name__ == "__main__":` entry
-    point -- the module registers as `__main__`, not `run`, so this is
-    the only test that walks the `runner._shim.run_module()` fallback
-    branch (`sys.modules.get("__main__")`) rather than the `sys.modules.
-    get("run")` branch every monkeypatch-based test exercises.
+    point. Note: --check-env returns before any `_shim.run_module()`
+    call site, so the shim's `__main__` fallback branch is exercised by
+    test_full_pipeline_skip_flags_via_real_subprocess below, not here.
     """
     result = subprocess.run(
         [sys.executable, "run.py", "--check-env"],
@@ -36,5 +35,28 @@ def test_check_env_exits_zero_via_real_subprocess():
     )
     assert result.returncode == 0, (
         f"run.py --check-env exited {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+
+
+def test_full_pipeline_skip_flags_via_real_subprocess():
+    """`python run.py --mode full --skip-deepear --skip-deepfund` exits 0
+    as a real script.
+
+    Unlike --check-env, this path reaches main()'s `print_banner` shim
+    call site while the module is registered as `__main__` (run.py was
+    exec'd, never imported), so it genuinely walks the
+    `runner._shim.run_module()` fallback branch
+    (`sys.modules.get("__main__")`).
+    """
+    result = subprocess.run(
+        [sys.executable, "run.py", "--mode", "full", "--skip-deepear", "--skip-deepfund"],
+        cwd=str(PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, (
+        f"run.py --mode full (both skips) exited {result.returncode}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )

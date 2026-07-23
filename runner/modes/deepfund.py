@@ -3,10 +3,10 @@
 Moved verbatim (behavior-preserving) from run.py by the
 extract-run-mode-handlers-deepear-deepfund-pipeline change
 (docs/refactor_program_plan.md Phase 2). run.py re-exports `run_deepfund`
-so existing `from run import run_deepfund` imports keep resolving (grep
-found zero `monkeypatch.setattr("run.run_deepfund", ...)` usages -- see
-the change's proposal.md audit -- so no `_shim` indirection is needed
-for its internal calls).
+so existing `from run import run_deepfund` imports keep resolving. Its
+internal `_validate_environment` call is `_shim`-routed because tests
+patch that callee via the "run._validate_environment" string path
+(caught by the Phase 2 adversarial review).
 
 Resolves the project root and deepfund src dir via `get_project_root()`
 / `get_deepfund_src()` at the call sites that used run.py's former
@@ -22,6 +22,7 @@ from datetime import datetime
 from shared.utils.path_manager import get_deepfund_src, get_project_root
 from shared.utils.time_utils import now_utc
 
+from runner import _shim
 from runner.bootstrap import load_dotenv_file
 from runner.config_discovery import _get_deepfund_config_candidates
 from runner.env_validation import _validate_environment
@@ -29,8 +30,10 @@ from runner.env_validation import _validate_environment
 
 def run_deepfund(args: argparse.Namespace) -> int:
     """Run DeepFund trading analysis."""
-    # Validate environment for deepfund mode
-    if not _validate_environment(mode="deepfund"):
+    # Route through the public `run` module so monkeypatch.setattr(
+    # "run._validate_environment", ...) keeps working post-extraction.
+    validate_environment = getattr(_shim.run_module(), "_validate_environment", None) or _validate_environment
+    if not validate_environment(mode="deepfund"):
         return 1
 
     print("\n" + "=" * 60)

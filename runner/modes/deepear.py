@@ -18,13 +18,16 @@ import argparse
 
 from shared.utils.path_manager import get_project_root
 
+from runner import _shim
 from runner.env_validation import _validate_environment
 
 
 def run_deepear(args: argparse.Namespace) -> int:
     """Run DeepEar intelligence gathering."""
-    # Validate environment for deepear mode
-    if not _validate_environment(mode="deepear"):
+    # Route through the public `run` module so monkeypatch.setattr(
+    # "run._validate_environment", ...) keeps working post-extraction.
+    validate_environment = getattr(_shim.run_module(), "_validate_environment", None) or _validate_environment
+    if not validate_environment(mode="deepear"):
         return 1
 
     print("\n" + "=" * 60)
