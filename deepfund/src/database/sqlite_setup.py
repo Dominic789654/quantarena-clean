@@ -2,6 +2,8 @@ import os
 import sqlite3
 from dotenv import load_dotenv
 
+from shared.db import configure_sqlite_connection, ensure_parent_dir
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -9,10 +11,7 @@ load_dotenv()
 def get_db_path():
     """Get the database path from environment variable (dynamic)."""
     db_path = os.getenv("DB_PATH", "data/deepfund.db")
-    # Ensure directory exists
-    db_dir = os.path.dirname(db_path)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
+    ensure_parent_dir(db_path)
     return db_path
 
 
@@ -33,7 +32,7 @@ DB_PATH = DBPathProxy()
 
 def init_database():
     """Initialize the SQLite database and create tables if they don't exist."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = configure_sqlite_connection(sqlite3.connect(DB_PATH))
     cursor = conn.cursor()
 
     # Create config table
