@@ -10,7 +10,7 @@ import os
 import uuid
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from datetime import UTC, datetime
+from datetime import datetime
 from loguru import logger
 
 # Setup project paths using unified path manager
@@ -36,7 +36,14 @@ from backtest.workflow.phase1_artifact import (  # noqa: F401
     SharedPhase1ArtifactCache,
 )
 from backtest.workflow.signal_cache import SharedAnalystSignalCache  # noqa: F401
-from backtest.workflow import scoring, decision_apply, db_store, company_news_signature, signal_collection
+from backtest.workflow import (
+    scoring,
+    decision_apply,
+    db_store,
+    company_news_signature,
+    signal_collection,
+    phase1_pipeline,
+)
 
 
 class BacktestWorkflowAdapter:
@@ -628,25 +635,8 @@ class BacktestWorkflowAdapter:
         enhanced_signals: Dict[str, Any],
         phase1_input_metadata: Optional[Dict[str, Any]] = None,
     ) -> SharedPhase1Artifact:
-        phase1_input_metadata = dict(phase1_input_metadata or {})
-        return SharedPhase1Artifact(
-            trading_date=trading_date,
-            prices=dict(prices),
-            enhanced_signals=enhanced_signals,
-            priority_order=self._get_smart_priority_order(enhanced_signals),
-            metadata={
-                "market": self.market,
-                "tickers": list(self.tickers),
-                "analysts": list(self.analysts),
-                "llm_provider": self.llm_provider,
-                "llm_model": self.llm_model,
-                "generated_at": datetime.now(UTC).isoformat(),
-                "artifact_version": self.SHARED_PHASE1_ARTIFACT_VERSION,
-                "priority_score_version": SharedPhase1ArtifactCache.PRIORITY_SCORE_VERSION,
-                "cache_hit": False,
-                "price_input_signature": SharedPhase1ArtifactCache._prices_signature(prices),
-                **phase1_input_metadata,
-            },
+        return phase1_pipeline._build_shared_phase1_artifact(
+            self, trading_date, prices, enhanced_signals, phase1_input_metadata
         )
 
     def load_or_compute_shared_phase1(
@@ -655,89 +645,7 @@ class BacktestWorkflowAdapter:
         prices: Dict[str, float],
         max_workers: int = 5,
     ) -> SharedPhase1Artifact:
-        artifact: Optional[SharedPhase1Artifact] = None
-        phase1_input_metadata: Dict[str, Any] = {}
-        prefetched_analyst_inputs: Dict[str, Dict[str, Any]] = {}
-        shared_phase1_cache_enabled = self.shared_phase1_artifact_cache is not None
-
-        if shared_phase1_cache_enabled:
-            try:
-                prefetched_analyst_inputs = self._build_phase1_prefetched_analyst_inputs(trading_date, prices)
-                phase1_input_metadata = self._resolve_phase1_input_metadata(
-                    trading_date,
-                    prices,
-                    prefetched_analyst_inputs=prefetched_analyst_inputs,
-                )
-            except Exception as signature_error:
-                shared_phase1_cache_enabled = False
-                prefetched_analyst_inputs = {}
-                logger.warning(
-                    f"Shared phase1 input signature resolution failed for {trading_date}; bypassing cache: {signature_error}"
-                )
-
-        if shared_phase1_cache_enabled:
-            try:
-                artifact = self.shared_phase1_artifact_cache.load(
-                    trading_date=trading_date,
-                    market=self.market,
-                    tickers=self.tickers,
-                    analysts=self.analysts,
-                    llm_provider=self.llm_provider,
-                    llm_model=self.llm_model,
-                    prices=prices,
-                    phase1_input_signature=str(phase1_input_metadata["phase1_input_signature"]),
-                )
-            except Exception as cache_error:
-                logger.warning(f"Shared phase1 artifact cache load failed for {trading_date}: {cache_error}")
-                artifact = None
-
-        if artifact is not None:
-            artifact.prices = dict(prices)
-            artifact.metadata = {
-                **artifact.metadata,
-                **phase1_input_metadata,
-                "resolved_at": datetime.now(UTC).isoformat(),
-                "cache_hit": True,
-            }
-            return artifact
-
-        if prefetched_analyst_inputs:
-            enhanced_signals = self.collect_signals_only_parallel_v2(
-                trading_date,
-                prices,
-                max_workers,
-                prefetched_analyst_inputs=prefetched_analyst_inputs,
-            )
-        else:
-            enhanced_signals = self.collect_signals_only_parallel_v2(
-                trading_date,
-                prices,
-                max_workers,
-            )
-        artifact = self._build_shared_phase1_artifact(
-            trading_date,
-            prices,
-            enhanced_signals,
-            phase1_input_metadata=phase1_input_metadata,
-        )
-
-        if shared_phase1_cache_enabled:
-            try:
-                self.shared_phase1_artifact_cache.save(
-                    trading_date=trading_date,
-                    market=self.market,
-                    tickers=self.tickers,
-                    analysts=self.analysts,
-                    llm_provider=self.llm_provider,
-                    llm_model=self.llm_model,
-                    prices=prices,
-                    phase1_input_signature=str(phase1_input_metadata["phase1_input_signature"]),
-                    artifact=artifact,
-                )
-            except Exception as cache_error:
-                logger.warning(f"Shared phase1 artifact cache save failed for {trading_date}: {cache_error}")
-
-        return artifact
+        return phase1_pipeline.load_or_compute_shared_phase1(self, trading_date, prices, max_workers)
 
     # Parallel analyst-signal collection engine (delegates to
     # backtest.workflow.signal_collection). Same-named delegator methods
