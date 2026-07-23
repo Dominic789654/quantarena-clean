@@ -17,22 +17,11 @@ from runner.bootstrap import _fix_tushare_token_file, load_dotenv_file  # noqa: 
 _fix_tushare_token_file()
 
 # Setup project paths using unified path manager
-from shared.utils.path_manager import (
-    get_deepfund_src,
-    get_project_root,
-    setup_paths,
-)
-from shared.utils.time_utils import now_utc
+from shared.utils.path_manager import setup_paths
 setup_paths()
 
-# Shared path handles used across run modes
-PROJECT_ROOT = get_project_root()
-DEEPFUND_SRC = get_deepfund_src()
 from runner.runtime_options import DEFAULT_BACKTEST_ANALYSTS_ARG  # noqa: F401,E402
 DEFAULT_MULTI_PERSONALITIES_ARG = "conservative,balanced,aggressive,passive"
-
-# Import stats for usage tracking
-from deepear.src.utils.stats import get_stats
 
 
 from runner.env_validation import (  # noqa: F401
@@ -62,186 +51,9 @@ from runner.runtime_options import (  # noqa: F401
 
 from runner.cli_support import print_banner  # noqa: F401
 
-
-def run_deepear(args: argparse.Namespace) -> int:
-    """Run DeepEar intelligence gathering."""
-    # Validate environment for deepear mode
-    if not _validate_environment(mode="deepear"):
-        return 1
-    
-    print("\n" + "=" * 60)
-    print("Mode: DeepEar Intelligence Gathering")
-    print("=" * 60 + "\n")
-
-    try:
-        # Import DeepEar modules
-        from main_flow import SignalFluxWorkflow
-        from utils.logging_setup import setup_file_logging, make_run_id
-
-        # Setup logging
-        run_id = args.run_id or make_run_id()
-        log_dir = args.log_dir or str(PROJECT_ROOT / "logs")
-        log_path = setup_file_logging(run_id=run_id, log_dir=log_dir, level=args.log_level)
-
-        print(f"Log file: {log_path}")
-        print(f"Run ID: {run_id}")
-
-        # Parse sources
-        if args.sources.lower() in ["all", "financial", "social", "tech"]:
-            sources = [args.sources]
-        else:
-            sources = [s.strip() for s in args.sources.split(",")]
-
-        # Parse depth
-        depth = args.depth
-        try:
-            depth = int(depth)
-        except ValueError:
-            pass  # Keep as 'auto' or original string
-
-        # Create workflow
-        workflow = SignalFluxWorkflow(isq_template_id=args.template or "default_isq_v1")
-
-        # Run workflow
-        result = workflow.run(
-            sources=sources,
-            wide=args.wide or 10,
-            depth=depth,
-            query=args.query or "扫描A股市场热点",
-            run_id=run_id,
-            checkpoint_dir=args.checkpoint_dir or str(PROJECT_ROOT / "reports" / "checkpoints"),
-            resume=args.resume,
-            resume_from=args.resume_from or "report",
-            concurrency=args.concurrency or 1,
-        )
-
-        print(f"\n{'=' * 60}")
-        print("DeepEar completed successfully!")
-        print(f"Output: {result}")
-        return 0
-
-    except ImportError as e:
-        print(f"ERROR: Failed to import DeepEar modules: {e}")
-        print("Make sure DeepEar is properly installed.")
-        return 1
-    except Exception as e:
-        print(f"ERROR: DeepEar execution failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
-
-
-def run_deepfund(args: argparse.Namespace) -> int:
-    """Run DeepFund trading analysis."""
-    # Validate environment for deepfund mode
-    if not _validate_environment(mode="deepfund"):
-        return 1
-    
-    print("\n" + "=" * 60)
-    print("Mode: DeepFund Trading Analysis")
-    print("=" * 60 + "\n")
-
-    try:
-        # Import DeepFund modules
-        # main.py is directly in deepfund/src/
-        import importlib.util
-        main_path = DEEPFUND_SRC / "main.py"
-        spec = importlib.util.spec_from_file_location("deepfund_main", main_path)
-        deepfund_main_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(deepfund_main_module)
-        deepfund_main = deepfund_main_module.main
-
-        # Load environment
-        load_dotenv_file(PROJECT_ROOT / ".env")
-
-        # Determine config file
-        config_file = args.config
-        if not config_file:
-            config_candidates = _get_deepfund_config_candidates(args.market)
-
-            # Find first existing config
-            for cfg in config_candidates:
-                if cfg.exists():
-                    config_file = str(cfg)
-                    break
-            else:
-                config_file = str(config_candidates[0])
-
-        print(f"Using config: {config_file}")
-
-        # Parse trading date
-        trading_date = args.date
-        if not trading_date:
-            # Default to today or last trading day
-            trading_date = now_utc().strftime("%Y-%m-%d")
-
-        try:
-            datetime.strptime(trading_date, "%Y-%m-%d")
-        except ValueError:
-            print(f"ERROR: Invalid date format: {trading_date}. Use YYYY-MM-DD.")
-            return 1
-
-        # Build sys.argv for deepfund_main
-        sys.argv = [
-            "deepfund",
-            "--config", config_file,
-            "--trading-date", trading_date,
-        ]
-        if args.local_db:
-            sys.argv.append("--local-db")
-
-        # Run DeepFund
-        deepfund_main()
-
-        print(f"\n{'=' * 60}")
-        print("DeepFund completed successfully!")
-        return 0
-
-    except ImportError as e:
-        print(f"ERROR: Failed to import DeepFund modules: {e}")
-        print("Make sure DeepFund is properly installed.")
-        return 1
-    except Exception as e:
-        print(f"ERROR: DeepFund execution failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
-
-
-def run_full_pipeline(args: argparse.Namespace) -> int:
-    """Run complete pipeline: DeepEar + DeepFund."""
-    print("\n" + "=" * 60)
-    print("Mode: Full Pipeline (DeepEar + DeepFund)")
-    print("=" * 60 + "\n")
-
-    exit_code = 0
-
-    # Phase 1: DeepEar Intelligence
-    if not args.skip_deepear:
-        deepear_exit = run_deepear(args)
-        if deepear_exit != 0 and not args.continue_on_error:
-            return deepear_exit
-        exit_code = max(exit_code, deepear_exit)
-    else:
-        print("Skipping DeepEar phase...")
-
-    # Phase 2: DeepFund Trading
-    if not args.skip_deepfund:
-        deepfund_exit = run_deepfund(args)
-        if deepfund_exit != 0 and not args.continue_on_error:
-            return deepfund_exit
-        exit_code = max(exit_code, deepfund_exit)
-    else:
-        print("Skipping DeepFund phase...")
-
-    print("\n" + "=" * 60)
-    print("Full Pipeline completed!")
-    print(f"{'=' * 60}")
-
-    # 打印使用统计报告
-    get_stats().print_report()
-
-    return exit_code
+from runner.modes.deepear import run_deepear  # noqa: F401
+from runner.modes.deepfund import run_deepfund  # noqa: F401
+from runner.modes.pipeline import run_full_pipeline  # noqa: F401
 
 
 from runner.runtime_options import VALID_PERSONALITIES, _parse_tickers_arg  # noqa: F401
