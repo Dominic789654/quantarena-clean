@@ -20,6 +20,7 @@ from typing import Any, Dict, Optional
 
 import requests
 
+from apis.alt_snapshot import SnapshotStore
 from .api_model import InstitutionalFiling, InsiderFiling
 
 # Well-known institution CIKs for convenience lookups.
@@ -70,6 +71,9 @@ class SECEdgarAPI:
         # Stay well below SEC's 10 req/s fair-access limit.
         self.min_request_interval = float(os.environ.get("SEC_EDGAR_MIN_INTERVAL", "0.15"))
         self.max_retries = 3
+        # Date-partitioned snapshots (SEC_EDGAR_SNAPSHOT_MODE, default off)
+        # enable offline replay of submissions and full-text search results.
+        self.snapshots = SnapshotStore("SEC_EDGAR", "data/cache/sec_edgar")
 
     # ------------------------------------------------------------------
     # HTTP helpers
@@ -114,7 +118,25 @@ class SECEdgarAPI:
         raise RuntimeError(f"SEC EDGAR request failed after {self.max_retries} attempts: {last_error}")
 
     def _cached_json(self, cache_key: str, ttl: float, url: str,
-                     params: Optional[Dict[str, Any]] = None) -> Any:
+                     params: Optional[Dict[str, Any]] = None,
+                     as_of: Optional[datetime] = None) -> Any:
+        snapshot_key = cache_key.replace(":", "/")
+        mode = self.snapshots.mode
+
+        # Replay: serve the snapshot captured at (or just before) as_of.
+        if mode == "local_only":
+            payload = self.snapshots.load_nearest(snapshot_key, as_of)
+            if payload is None:
+                raise FileNotFoundError(
+                    f"SEC EDGAR snapshot not found for {snapshot_key} as of {as_of or 'today'}"
+                )
+            return payload
+
+        if mode == "prefer_local":
+            payload = self.snapshots.load_exact(snapshot_key, as_of)
+            if payload is not None:
+                return payload
+
         now = time.time()
         with self._cache_lock:
             hit = self._cache.get(cache_key)
@@ -126,6 +148,8 @@ class SECEdgarAPI:
             while len(self._cache) >= self.MAX_CACHE_ENTRIES:
                 self._cache.pop(next(iter(self._cache)))
             self._cache[cache_key] = (now, data)
+        if mode in {"prefer_local", "refresh"}:
+            self.snapshots.save(snapshot_key, data)
         return data
 
     @classmethod
@@ -174,6 +198,7 @@ class SECEdgarAPI:
             cache_key=f"submissions:{norm_cik}",
             ttl=self.SUBMISSIONS_CACHE_TTL,
             url=self.SUBMISSIONS_URL.format(cik=norm_cik),
+            as_of=trading_date,
         )
 
         recent = (data.get("filings") or {}).get("recent") or {}
@@ -252,6 +277,7 @@ class SECEdgarAPI:
             ttl=self.SEARCH_CACHE_TTL,
             url=self.FULL_TEXT_SEARCH_URL,
             params=params,
+            as_of=trading_date,
         )
 
         hits = data.get("hits", {}).get("hits", [])

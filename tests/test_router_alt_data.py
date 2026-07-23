@@ -50,8 +50,12 @@ def test_router_lazy_inits_apewisdom(fmp_router, monkeypatch):
     fmp_router.get_us_social_ticker_mentions("MU")
 
     ape_cls.assert_called_once()
-    ape_instance.get_trending.assert_called_once_with(filter_key="wallstreetbets", limit=10)
-    ape_instance.get_ticker_mentions.assert_called_once_with("MU", filter_key="wallstreetbets")
+    ape_instance.get_trending.assert_called_once_with(
+        filter_key="wallstreetbets", limit=10, as_of=None
+    )
+    ape_instance.get_ticker_mentions.assert_called_once_with(
+        "MU", filter_key="wallstreetbets", as_of=None
+    )
 
 
 def test_alt_data_does_not_touch_primary_source(fmp_router, monkeypatch):
