@@ -18,20 +18,10 @@ from loguru import logger
 from shared.utils.path_manager import setup_paths
 setup_paths()
 from shared.config.profile_registry import PROFILE_ALIASES, normalize_profile_name
-from shared.utils.macaron_responses import (
-    build_ticker_weight_schema,
-    call_macaron_json,
-    extract_token_usage,
-)
 
 from deepear.src.utils.llm.factory import get_model
 from agno.agent import Agent
 
-try:
-    from llm.inference import record_token_usage
-    TOKEN_TRACKER_AVAILABLE = True
-except ImportError:
-    TOKEN_TRACKER_AVAILABLE = False
 
 
 @dataclass
@@ -191,13 +181,10 @@ class PortfolioAllocator:
 
         # 调用 LLM
         try:
-            if self.llm_provider == "macaron":
-                allocations = self._allocate_with_macaron(prompt, list(signals.keys()))
-            else:
-                model = get_model(self.llm_provider, self.llm_model)
-                agent = Agent(model=model, markdown=False)
-                response = agent.run(prompt)
-                allocations = self._parse_allocation(response.content, list(signals.keys()))
+            model = get_model(self.llm_provider, self.llm_model)
+            agent = Agent(model=model, markdown=False)
+            response = agent.run(prompt)
+            allocations = self._parse_allocation(response.content, list(signals.keys()))
 
             logger.info(f"Portfolio allocation for {trading_date}: {allocations}")
             return allocations
@@ -326,33 +313,6 @@ class PortfolioAllocator:
         total = sum(allocations.values())
         if total > 1.0:
             allocations = {ticker: weight / total for ticker, weight in allocations.items()}
-        return allocations
-
-    @staticmethod
-    def _estimate_tokens(prompt: str, response_text: str = "") -> tuple[int, int]:
-        """Best-effort token estimate when provider metadata is unavailable."""
-        return max(1, len(prompt or "") // 3), max(1, len(response_text or "") // 3 or 1)
-
-    def _allocate_with_macaron(self, prompt: str, tickers: List[str]) -> Dict[str, float]:
-        """Allocate via the Macaron Responses API using strict JSON-schema output."""
-        parsed, raw = call_macaron_json(
-            prompt,
-            build_ticker_weight_schema(tickers),
-            schema_name=f"{self.personality}_allocation",
-            model=self.llm_model,
-            timeout=int(os.getenv("MACARON_TIMEOUT", "120")),
-        )
-        allocations = self._normalize_allocations(parsed, tickers, require_all_tickers=True)
-
-        if TOKEN_TRACKER_AVAILABLE:
-            estimated_input, estimated_output = self._estimate_tokens(prompt, json.dumps(allocations, ensure_ascii=False))
-            usage_input, usage_output = extract_token_usage(raw)
-            if usage_input > 0:
-                estimated_input = usage_input
-            if usage_output > 0:
-                estimated_output = usage_output
-            record_token_usage("portfolio_allocator", estimated_input, estimated_output, self.llm_provider)
-
         return allocations
 
     def _parse_allocation(self, content: str, tickers: List[str]) -> Dict[str, float]:

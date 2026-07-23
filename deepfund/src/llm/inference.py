@@ -9,7 +9,6 @@ from typing import Dict, Any, Optional, Type, Union, get_args, get_origin
 from dataclasses import dataclass
 from pydantic import BaseModel
 from llm.provider import Provider
-from shared.utils.macaron_responses import call_macaron_pydantic, extract_token_usage
 from util.logger import logger
 
 # Add deepear path for stats import
@@ -447,8 +446,6 @@ def get_model(config: LLMConfig):
     """Get a model instance based on configuration."""
 
     provider = Provider.from_string(config.provider)
-    if provider == Provider.MACARON:
-        raise ValueError("Macaron uses the Responses API and should be invoked through the dedicated adapter path.")
     model_config = provider.config
 
     if model_config.requires_api_key:
@@ -479,42 +476,6 @@ def get_model(config: LLMConfig):
         raise ValueError(f"{provider} Chat Error: {e}")
 
 
-def _agent_call_macaron(
-    prompt: str,
-    llm_cfg: LLMConfig,
-    pydantic_model: Type[BaseModel],
-    agent_name: str,
-    provider_name: str,
-):
-    """Structured call path for the Macaron Responses API."""
-    for attempt in range(llm_cfg.max_retries):
-        try:
-            result, raw_response = call_macaron_pydantic(
-                prompt,
-                pydantic_model,
-                schema_name=f"{agent_name}_{pydantic_model.__name__}",
-                model=llm_cfg.model,
-                timeout=int(os.getenv("MACARON_TIMEOUT", "120")),
-            )
-
-            estimated_input, estimated_output = _estimate_tokens(prompt, str(result.model_dump()))
-            usage_input, usage_output = extract_token_usage(raw_response)
-            if usage_input > 0:
-                estimated_input = usage_input
-            if usage_output > 0:
-                estimated_output = usage_output
-
-            record_token_usage(agent_name, estimated_input, estimated_output, provider_name)
-            return result
-        except Exception as e:
-            logger.warning(f"Attempt {attempt + 1}/{llm_cfg.max_retries} failed for Macaron structured call: {e}")
-
-    logger.error(f"All {llm_cfg.max_retries} Macaron attempts failed")
-    estimated_input, estimated_output = _estimate_tokens(prompt, "Macaron call failed")
-    record_token_usage(agent_name, estimated_input, estimated_output, provider_name)
-    return _safe_model_fallback(pydantic_model)
-
-
 def agent_call(
     prompt: str,
     llm_config: Dict[str, Any],
@@ -534,10 +495,6 @@ def agent_call(
     """
     llm_cfg = LLMConfig(**llm_config)
     provider_name = llm_config.get("provider", "deepseek")
-    provider_key = str(provider_name).lower()
-
-    if provider_key == "macaron":
-        return _agent_call_macaron(prompt, llm_cfg, pydantic_model, agent_name, provider_name)
 
     try:
         llm = get_model(llm_cfg)

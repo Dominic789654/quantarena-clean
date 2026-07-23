@@ -26,7 +26,6 @@ class ModelConfig:
 
 class Provider(str, Enum):
     """Supported LLM providers"""
-    MACARON = "Macaron"
     OPENAI = "OpenAI"
     ANTHROPIC = "Anthropic"
     DEEPSEEK = "DeepSeek"
@@ -53,11 +52,6 @@ class Provider(str, Enum):
     def config(self) -> ModelConfig:
         """Get the configuration for this provider"""
         PROVIDER_CONFIGS = {
-            Provider.MACARON: ModelConfig(
-                model_class=None,
-                env_key="MACARON_API_KEY",
-                base_url="https://cc.macaron.xin/openai/v1/responses",
-            ),
             Provider.OPENAI: ModelConfig(
                 model_class=ChatOpenAI,
                 env_key="OPENAI_API_KEY",
