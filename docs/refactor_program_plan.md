@@ -12,6 +12,17 @@ each adversarially reviewed, then synthesized). Every claim below was
 grounded in file:line evidence at the time of writing; re-verify line
 numbers before executing a step.
 
+> **Status (2026-07-23): COMPLETE.** All four tracks executed and merged —
+> Phase 0 (prereqs), Phase 1 (shared SQLite pragmas), Phase 2 (`run.py` →
+> `runner/`, 75-line shim), Phase 3 (`workflow_adapter.py` →
+> `backtest/workflow/`, 36-line shim), Phase 4 (`report_agent.py` →
+> `deepear/src/agents/report/`, 34-line shim). Suite grew 910 → 1088
+> passed / 10 skipped. Every change's OpenSpec artifacts are archived
+> under `openspec/changes/archive/2026-07-23-*`. The only deferred steps
+> are the optional consumer migrations (steps labeled "optional/deferred"
+> per track, e.g. step 32 `migrate-report-agent-direct-consumers`), which
+> remove the shims once direct consumers update their imports.
+
 ## Ground rules (apply to every step of every track)
 
 1. The full suite must stay green after **every** migration step; each step
