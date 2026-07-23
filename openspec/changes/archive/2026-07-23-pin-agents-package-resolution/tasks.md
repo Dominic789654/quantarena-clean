@@ -12,5 +12,5 @@
 ## 3. Verification
 
 - [x] 3.1 Full suite green at the sanctioned baseline (910 passed / 10 skipped in `.venv_unified`).
-- [ ] 3.2 `ruff check .` clean; CI green on PR.
+- [x] 3.2 `ruff check .` clean; CI green on PR.
 - [x] 3.3 Spot-check the two runtime entry points (`python run.py --check-env`, `python -m quantarena.cli smoke --json`) still work in a fresh process.
