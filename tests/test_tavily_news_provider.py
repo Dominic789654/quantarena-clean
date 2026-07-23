@@ -754,3 +754,81 @@ def test_router_logs_snapshot_source_when_cache_hit(capsys):
 
     out = capsys.readouterr().out
     assert "provider=snapshot_kimi" in out
+
+
+def test_tavily_backdated_request_constrains_date_range_and_drops_undated(monkeypatch):
+    """Backdated replay must date-bound the search and drop undated items.
+
+    Without start/end dates Tavily searches the current web, and the
+    stamp-undated-items-with-trading-date fallback would let current-web
+    content masquerade as trading-day news (forward-looking leakage in
+    backtest replays, observed on the 2026-04 CN 3M rerun).
+    """
+    monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+
+    captured_payload = {}
+
+    def fake_post(url, json=None, timeout=None, **kwargs):
+        captured_payload.update(json or {})
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "results": [
+                {
+                    "title": "dated within window",
+                    "url": "https://finance.example.com/dated",
+                    "content": "ok",
+                    "published_date": "2026-04-27T09:00:00Z",
+                },
+                {
+                    "title": "undated current-web item must be dropped",
+                    "url": "https://finance.example.com/undated",
+                    "content": "leaky",
+                },
+            ]
+        }
+        return mock_response
+
+    api = TavilyNewsAPI()
+    with patch.object(api._session, "post", side_effect=fake_post):
+        news = api.get_news(
+            ticker="600519",
+            trading_date=datetime(2026, 4, 28),
+            limit=5,
+            market="cn",
+        )
+
+    assert captured_payload["topic"] == "news"
+    assert captured_payload["start_date"] == "2026-04-21"
+    assert captured_payload["end_date"] == "2026-04-28"
+    assert [n.title for n in news] == ["dated within window"]
+
+
+def test_tavily_live_request_keeps_original_shape_and_stamps_undated(monkeypatch):
+    """trading_date=None (live mode) keeps the original request and fallback."""
+    monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+
+    captured_payload = {}
+
+    def fake_post(url, json=None, timeout=None, **kwargs):
+        captured_payload.update(json or {})
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "results": [
+                {
+                    "title": "undated live item is kept",
+                    "url": "https://finance.example.com/live",
+                    "content": "ok",
+                }
+            ]
+        }
+        return mock_response
+
+    api = TavilyNewsAPI()
+    with patch.object(api._session, "post", side_effect=fake_post):
+        news = api.get_news(ticker="600519", trading_date=None, limit=5, market="cn")
+
+    assert "start_date" not in captured_payload and "end_date" not in captured_payload
+    assert "topic" not in captured_payload
+    assert len(news) == 1 and news[0].title == "undated live item is kept"

@@ -509,13 +509,21 @@ class FMPAPI:
         if ticker and not topic:
             try:
                 stock_path = "/stable/news/stock"
-                rows = self._request_json(
-                    stock_path,
-                    {
-                        "symbols": ticker,
-                        "limit": max_items,
-                    },
-                )
+                stock_params: Dict[str, Any] = {
+                    "symbols": ticker,
+                    "limit": max_items,
+                }
+                if trading_date is not None:
+                    # Without a date range the endpoint returns only the
+                    # latest articles, so backdated trading dates (backtest
+                    # replays) get everything filtered out by
+                    # _within_trading_date and the news channel silently
+                    # degrades to "no news". Constrain the request to the
+                    # week up to the trading date instead; live calls
+                    # (trading_date=None) keep the original behavior.
+                    stock_params["from"] = (trading_date - timedelta(days=7)).strftime("%Y-%m-%d")
+                    stock_params["to"] = trading_date.strftime("%Y-%m-%d")
+                rows = self._request_json(stock_path, stock_params)
                 if isinstance(rows, list):
                     results, counts = self._collect_matching_news(
                         rows,
