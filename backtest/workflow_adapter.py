@@ -9,7 +9,6 @@ Provides simplified interface for sequential day-by-day trading simulation.
 import os
 import uuid
 import json
-import sqlite3
 import hashlib
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -41,7 +40,7 @@ from backtest.workflow.phase1_artifact import (  # noqa: F401
     SharedPhase1ArtifactCache,
 )
 from backtest.workflow.signal_cache import SharedAnalystSignalCache  # noqa: F401
-from backtest.workflow import scoring, decision_apply
+from backtest.workflow import scoring, decision_apply, db_store
 
 
 class BacktestWorkflowAdapter:
@@ -162,187 +161,35 @@ class BacktestWorkflowAdapter:
         return build_api_source_config(self.market, base_config)
 
     def _create_temp_db(self) -> str:
-        """Create a temporary SQLite database for this backtest run."""
-        from shared.utils.path_manager import get_project_root
-        
-        temp_dir = get_project_root() / "data" / "backtest"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-
-        db_file = temp_dir / (
-            f"backtest_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{uuid.uuid4().hex[:8]}.db"
-        )
-        return str(db_file)
+        """Create a temporary SQLite database for this backtest run (delegates to backtest.workflow.db_store)."""
+        return db_store._create_temp_db()
 
     def _setup_database(self):
-        """Initialize SQLite database with required tables."""
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        # Create config table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS config (
-                id VARCHAR(36) PRIMARY KEY,
-                exp_name VARCHAR(100) NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                tickers JSON NOT NULL,
-                has_planner BOOLEAN NOT NULL DEFAULT FALSE,
-                llm_model VARCHAR(50) NOT NULL,
-                llm_provider VARCHAR(50) NOT NULL
-            )
-        ''')
-
-        # Create portfolio table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS portfolio (
-                id VARCHAR(36) PRIMARY KEY,
-                config_id VARCHAR(36) NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                trading_date TIMESTAMP NOT NULL,
-                cashflow DECIMAL(15,2) NOT NULL,
-                total_assets DECIMAL(15,2) NOT NULL,
-                positions JSON NOT NULL,
-                FOREIGN KEY (config_id) REFERENCES config(id)
-            )
-        ''')
-
-        # Create decision table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS decision (
-                id VARCHAR(36) PRIMARY KEY,
-                portfolio_id VARCHAR(36) NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                trading_date TIMESTAMP NOT NULL,
-                ticker VARCHAR(10) NOT NULL,
-                llm_prompt TEXT NOT NULL,
-                action VARCHAR(10) NOT NULL,
-                shares INTEGER NOT NULL,
-                price DECIMAL(15,2) NOT NULL,
-                justification TEXT NOT NULL,
-                FOREIGN KEY (portfolio_id) REFERENCES portfolio(id)
-            )
-        ''')
-
-        # Create signal table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS signal (
-                id VARCHAR(36) PRIMARY KEY,
-                portfolio_id VARCHAR(36) NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                ticker VARCHAR(10) NOT NULL,
-                llm_prompt TEXT NOT NULL,
-                analyst VARCHAR(50) NOT NULL,
-                signal VARCHAR(10) NOT NULL,
-                justification TEXT NOT NULL,
-                FOREIGN KEY (portfolio_id) REFERENCES portfolio(id)
-            )
-        ''')
-
-        # Create indices
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_config_exp_name ON config(exp_name)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_portfolio_config ON portfolio(config_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_portfolio_trading_date ON portfolio(trading_date)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_decision_portfolio ON decision(portfolio_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_signal_portfolio ON signal(portfolio_id)')
-
-        conn.commit()
-        conn.close()
-
-        logger.debug(f"Database initialized at {self.db_path}")
+        """Initialize SQLite database with required tables (delegates to backtest.workflow.db_store)."""
+        db_store._setup_database(self.db_path)
 
     def _ensure_config(self) -> str:
-        """Create or get config entry for this backtest."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        # Use self.exp_name for consistency
-        exp_name = self.exp_name
-
-        # Check if config exists
-        cursor.execute('SELECT id FROM config WHERE exp_name = ?', (exp_name,))
-        row = cursor.fetchone()
-
-        if row:
-            conn.close()
-            logger.debug(f"Found existing config: {row[0]}")
-            return row[0]
-
-        # Create new config
-        config_id = str(uuid.uuid4())
-        cursor.execute('''
-            INSERT INTO config (id, exp_name, updated_at, tickers, has_planner, llm_model, llm_provider)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            config_id,
-            exp_name,
-            datetime.now().isoformat(),
-            json.dumps(self.tickers),
-            False,  # no planner for backtest
+        """Create or get config entry for this backtest (delegates to backtest.workflow.db_store)."""
+        return db_store._ensure_config(
+            self.db_path,
+            self.exp_name,
+            self.tickers,
             self.llm_model,
-            self.llm_provider
-        ))
-
-        conn.commit()
-        conn.close()
-
-        logger.info(f"Created backtest config: {config_id}, exp_name: {exp_name}")
-        return config_id
+            self.llm_provider,
+        )
 
     def _get_or_create_portfolio(self, trading_date: str) -> Dict:
-        """Get or create portfolio for the trading date."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        # Create new portfolio entry for this day
-        portfolio_id = str(uuid.uuid4())
-        total_assets = self.current_portfolio["cashflow"] + sum(
-            pos["value"] for pos in self.current_portfolio["positions"].values()
-        )
-
-        cursor.execute('''
-            INSERT INTO portfolio (id, config_id, updated_at, trading_date, cashflow, total_assets, positions)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            portfolio_id,
+        """Get or create portfolio for the trading date (delegates to backtest.workflow.db_store)."""
+        return db_store._get_or_create_portfolio(
+            self.db_path,
             self.config_id,
-            datetime.now().isoformat(),
-            trading_date,  # Keep as string for our local DB
-            self.current_portfolio["cashflow"],
-            total_assets,
-            json.dumps(self.current_portfolio["positions"])
-        ))
-
-        conn.commit()
-        conn.close()
-
-        self.current_portfolio["id"] = portfolio_id
-        return self.current_portfolio.copy()
+            trading_date,
+            self.current_portfolio,
+        )
 
     def _update_portfolio(self, trading_date: str):
-        """Update portfolio in database after decisions."""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        total_assets = self.current_portfolio["cashflow"] + sum(
-            pos["value"] for pos in self.current_portfolio["positions"].values()
-        )
-
-        cursor.execute('''
-            UPDATE portfolio
-            SET cashflow = ?, total_assets = ?, positions = ?, updated_at = ?
-            WHERE id = ?
-        ''', (
-            self.current_portfolio["cashflow"],
-            total_assets,
-            json.dumps(self.current_portfolio["positions"]),
-            datetime.now().isoformat(),
-            self.current_portfolio["id"]
-        ))
-
-        conn.commit()
-        conn.close()
+        """Update portfolio in database after decisions (delegates to backtest.workflow.db_store)."""
+        db_store._update_portfolio(self.db_path, self.current_portfolio, trading_date)
 
     def run_single_day(
         self,
