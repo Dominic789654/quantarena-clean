@@ -55,6 +55,27 @@ from shared.utils.path_manager import setup_paths
 setup_paths()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _pin_ambiguous_package_resolution():
+    """Pin the ambiguous bare packages for the whole session:
+    `agents` -> deepfund/src (analyst registry), `utils` -> deepear/src
+    (visualizer/stock_tools/database_manager). setup_paths(force=True)
+    corrects any pre-polluted sys.path order, and importing the canonical
+    modules here caches them in sys.modules so pytest collection order can
+    never flip the winners mid-suite. See shared/utils/path_manager.py."""
+    setup_paths(force=True)
+    import agents.registry as registry_mod
+    import utils as utils_mod
+
+    assert "deepfund" in (registry_mod.__file__ or ""), (
+        f"bare `agents` resolved to {registry_mod.__file__!r}; expected deepfund/src/agents"
+    )
+    assert "deepear" in (utils_mod.__file__ or ""), (
+        f"bare `utils` resolved to {utils_mod.__file__!r}; expected deepear/src/utils"
+    )
+    yield
+
+
 # Env vars that change provider routing or credentials. Modules under test
 # call load_dotenv() at import time, so a developer's .env (or shell) leaks
 # into os.environ and silently flips routing-dependent assertions. Scrub them

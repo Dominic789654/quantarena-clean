@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
-# Ensure deepfund's `agents` package wins over deepear's on sys.path.
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "deepfund" / "src"))
-
-from deepfund.src.agents.analysts.social_sentiment import SocialSentimentAnalyst  # noqa: E402
-from deepfund.src.agents.registry import AgentRegistry  # noqa: E402
-from deepfund.src.apis.apewisdom.api_model import SocialMention  # noqa: E402
-from deepfund.src.graph.constants import AgentKey  # noqa: E402
+# `agents` package resolution is pinned centrally by setup_paths() /
+# the session fixture in conftest.py — no per-file sys.path hack needed.
+from deepfund.src.agents.analysts.social_sentiment import SocialSentimentAnalyst
+from deepfund.src.agents.registry import AgentRegistry
+from deepfund.src.apis.apewisdom.api_model import SocialMention
+from deepfund.src.graph.constants import AgentKey
 
 
 MU = SocialMention(

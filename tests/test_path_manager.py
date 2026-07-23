@@ -83,5 +83,71 @@ class TestPathManager:
         assert BacktestEngine is not None
 
 
+class TestDeterministicOrdering:
+    """package-path-resolution capability: deepfund/src precedes deepear/src
+    regardless of prior sys.path state, so the dual `agents` package always
+    resolves to deepfund's analyst registry."""
+
+    @pytest.fixture(autouse=True)
+    def restore_sys_path(self):
+        from shared.utils import path_manager
+
+        saved = list(sys.path)
+        saved_flag = path_manager._initialized
+        yield
+        sys.path[:] = saved
+        path_manager._initialized = saved_flag
+
+    def test_prepolluted_order_is_corrected(self):
+        from shared.utils import path_manager
+        from shared.utils.path_manager import PATHS_TO_ADD, setup_paths
+
+        deepfund_src = str(path_manager.PROJECT_ROOT / "deepfund" / "src")
+        deepear_src = str(path_manager.PROJECT_ROOT / "deepear" / "src")
+        for path in PATHS_TO_ADD:
+            while path in sys.path:
+                sys.path.remove(path)
+        sys.path.insert(0, deepfund_src)
+        sys.path.insert(0, deepear_src)  # wrong winner on top
+
+        setup_paths(force=True)
+
+        assert sys.path.index(deepfund_src) < sys.path.index(deepear_src)
+
+    def test_idempotent_and_no_duplicates(self):
+        from shared.utils.path_manager import PATHS_TO_ADD, setup_paths
+
+        setup_paths(force=True)
+        first = list(sys.path)
+        setup_paths(force=True)
+
+        assert sys.path == first
+        for path in PATHS_TO_ADD:
+            assert sys.path.count(path) == 1
+
+    def test_unmanaged_entries_keep_relative_order(self):
+        from shared.utils.path_manager import setup_paths
+
+        marker_a, marker_b = "/tmp/zz-unmanaged-a", "/tmp/zz-unmanaged-b"
+        sys.path.append(marker_a)
+        sys.path.append(marker_b)
+
+        setup_paths(force=True)
+
+        assert sys.path.index(marker_a) < sys.path.index(marker_b)
+
+    def test_bare_agents_import_resolves_to_deepfund(self):
+        import agents.registry as registry_mod
+
+        assert "deepfund" in (registry_mod.__file__ or "")
+
+    def test_bare_utils_import_resolves_to_deepear(self):
+        """report_agent/search_tools/deepear_client rely on bare `utils.*`
+        resolving to deepear/src/utils, never shared/utils."""
+        import utils
+
+        assert "deepear" in (utils.__file__ or "")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

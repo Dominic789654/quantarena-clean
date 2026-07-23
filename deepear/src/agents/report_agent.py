@@ -967,7 +967,7 @@ class ReportAgent:
                 final_response_content = f"# 研报生成失败\n\n{e}"
 
             # Normalize citations + inject programmatic bibliography
-            final_response_content = self._normalize_citations(final_response_content, signal_to_keys)
+            final_response_content = self._normalize_citations(final_response_content, signal_to_keys, key_to_num)
             final_response_content = self._inject_references(
                 final_response_content,
                 self._render_references_section(bib_entries, key_to_num),
