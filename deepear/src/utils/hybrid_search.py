@@ -1,6 +1,6 @@
 import numpy as np
 import os
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any
 from rank_bm25 import BM25Okapi
 from loguru import logger
 from sklearn.metrics.pairwise import cosine_similarity
@@ -147,7 +147,7 @@ class HybridSearcher:
                 res["_search_score"] = bm25_scores[original_idx]
                 if use_vector and self._vector_fitted:
                     res["_vector_score"] = float(similarities[original_idx])
-            except:
+            except Exception:
                 res["_search_score"] = 0
             
         return results
@@ -185,7 +185,7 @@ class LocalNewsSearch(HybridSearcher):
         """从数据库加载最近 N 天的新闻构建索引"""
         try:
             # 假设 db_manager 有 execute_query
-            query = f"SELECT title, content, publish_time, source FROM daily_news ORDER BY publish_time DESC LIMIT ?"
+            query = "SELECT title, content, publish_time, source FROM daily_news ORDER BY publish_time DESC LIMIT ?"
             results = self.db.execute_query(query, (limit,))
             
             data = []

@@ -1,6 +1,6 @@
 import sqlite3
 import json
-from datetime import datetime, date
+from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Union
 import pandas as pd
@@ -76,7 +76,7 @@ class DatabaseManager:
         # 尝试添加 analysis 列（如果表已存在但没有该列）
         try:
             cursor.execute("ALTER TABLE daily_news ADD COLUMN analysis TEXT")
-        except:
+        except Exception:
             pass  # 列已存在
 
         
@@ -181,7 +181,7 @@ class DatabaseManager:
         # 尝试添加 user_id 列到 signals 表
         try:
             cursor.execute("ALTER TABLE signals ADD COLUMN user_id TEXT")
-        except:
+        except Exception:
             pass
             
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_signals_user_id ON signals(user_id)")
@@ -652,7 +652,7 @@ class DatabaseManager:
                 if d.get(field):
                     try:
                         d[field] = json.loads(d[field])
-                    except:
+                    except Exception:
                         pass
             signals.append(d)
         return signals

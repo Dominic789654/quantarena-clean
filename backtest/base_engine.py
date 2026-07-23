@@ -6,11 +6,8 @@ Abstract base class for all backtest engines.
 Provides common functionality for data loading, trading day management, and result collection.
 """
 
-import sys
-from pathlib import Path
 from typing import List, Dict, Any, Optional
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
 from loguru import logger
 
 # Setup project paths using unified path manager

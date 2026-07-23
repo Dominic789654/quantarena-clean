@@ -4,7 +4,7 @@ Reference: https://tushare.pro/document/2
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional
 
 
 class TushareNews(BaseModel):

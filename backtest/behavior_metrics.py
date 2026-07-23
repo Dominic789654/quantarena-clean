@@ -8,7 +8,7 @@ the existing backtest tracker and strategy-specific metrics payloads.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable
+from typing import Any, Dict
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -29,7 +29,7 @@ def compute_behavior_metrics(tracker, strategy_metrics: Dict[str, Any] | None = 
     tracker interfaces.
     """
     strategy_metrics = dict(strategy_metrics or {})
-    summary = tracker.get_summary() if tracker is not None and hasattr(tracker, "get_summary") else {}
+    tracker.get_summary() if tracker is not None and hasattr(tracker, "get_summary") else {}
     snapshots = list(getattr(tracker, "snapshots", []) or [])
 
     avg_cash_ratio = 0.0

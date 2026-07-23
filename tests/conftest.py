@@ -3,12 +3,10 @@ Test configuration and fixtures for QuantArena tests.
 """
 
 import pytest
-from unittest.mock import Mock, MagicMock
-from datetime import datetime
+from unittest.mock import Mock
 import sys
 import types
 import importlib.util
-from pathlib import Path
 
 
 class _DummyChatModel:

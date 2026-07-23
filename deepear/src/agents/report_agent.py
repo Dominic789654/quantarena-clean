@@ -1,6 +1,5 @@
 import hashlib
 import json
-import textwrap
 import time
 from datetime import datetime, timedelta
 import pandas as pd
@@ -15,7 +14,7 @@ from deepear.src.utils.hybrid_search import InMemoryRAG
 from deepear.src.utils.json_utils import extract_json
 from deepear.src.utils.stock_tools import StockTools
 import re
-from deepear.src.schema.models import InvestmentSignal, InvestmentReport, TransmissionNode, ClusterContext, ForecastResult
+from deepear.src.schema.models import ClusterContext, ForecastResult
 from deepear.src.agents.forecast_agent import ForecastAgent
 from deepear.src.prompts.report_agent import (
     get_report_planner_base_instructions,
@@ -115,7 +114,6 @@ class ReportAgent:
             响应内容，如果所有重试都失败则返回 None
         """
         import threading
-        import functools
 
         for attempt in range(self.LLM_MAX_RETRIES + 1):
             try:
@@ -766,9 +764,9 @@ class ReportAgent:
 
         # 摘要要点
         bullets = [
-            re.sub(r"^[-*•]\s+", "", l.strip())
-            for l in lines
-            if l.strip().startswith(("- ", "* ", "• "))
+            re.sub(r"^[-*•]\s+", "", text.strip())
+            for text in lines
+            if text.strip().startswith(("- ", "* ", "• "))
         ]
         bullets = [b for b in bullets if b]
 
@@ -842,7 +840,7 @@ class ReportAgent:
         for i, cluster in enumerate(clusters, 1):
             theme_title = cluster.get("theme_title", f"主题 {i}")
             signal_ids = cluster.get("signal_ids", [])
-            rationale = cluster.get("rationale", "")
+            cluster.get("rationale", "")
             
             logger.info(f"✍️ Writing draft for theme [{i}/{len(clusters)}]: {theme_title} (Signals: {signal_ids})...")
             
@@ -1293,7 +1291,8 @@ class ReportAgent:
                                                 if res['code'] == cand:
                                                     best_match = res['code']
                                                     break
-                                            if best_match: break
+                                            if best_match:
+                                                break
                                     
                                     # 如果没有通过数字补全找到，尝试名称匹配或默认第一个
                                     if not best_match:

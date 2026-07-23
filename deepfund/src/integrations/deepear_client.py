@@ -294,7 +294,6 @@ class DeepEarClient:
     ) -> Dict[str, Any]:
         """Internal implementation of ticker analysis with per-step timing."""
         import importlib.util
-        import signal as sig
 
         deepear_src = str(DEEPEAR_SRC_PATH)
 
@@ -361,10 +360,9 @@ class DeepEarClient:
             skip_polymarket=self.skip_polymarket
         )
 
-        trend_result = None
         step_start = time.time()
         try:
-            trend_result = trend_agent.discover_daily_signals(focus_sources=sources)
+            trend_agent.discover_daily_signals(focus_sources=sources)
             if timing:
                 timing.record_step("trend_agent", time.time() - step_start)
                 logger.info(f"⏱️ TrendAgent completed in {timing.step_times['trend_agent']:.1f}s")

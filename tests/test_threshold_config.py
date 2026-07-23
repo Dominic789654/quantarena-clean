@@ -7,7 +7,7 @@ Tests the centralized threshold configuration loading and validation.
 
 import pytest
 from pathlib import Path
-from unittest.mock import patch, mock_open, MagicMock
+from unittest.mock import patch, mock_open
 import yaml
 import sys
 import os

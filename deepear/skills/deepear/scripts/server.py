@@ -52,7 +52,6 @@ if root_dir and root_dir.exists():
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 import uvicorn
-import asyncio
 import uuid
 from datetime import datetime
 

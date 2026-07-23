@@ -103,7 +103,7 @@ def get_news_filter_instructions(news_count: int, depth: Any, user_query: str = 
             d_int = int(depth)
             depth_guide = f"约 {d_int} 条"
             limit_instruction = f"请尽量凑满 {d_int} 条，但如果剩余新闻全是噪音，则不必强行凑数。"
-        except:
+        except Exception:
             depth_guide = "适量"
             limit_instruction = "根据内容价值判断。"
 

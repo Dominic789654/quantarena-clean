@@ -6,7 +6,6 @@ Extends BacktestEngine to support Smart Beta index enhancement strategies.
 Integrates factor calculation, optimization, and macro adjustment.
 """
 
-import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
@@ -18,7 +17,6 @@ from shared.utils.path_manager import setup_paths
 setup_paths()
 
 from backtest.engine import BacktestEngine, BacktestResult
-from backtest.portfolio_tracker import Trade, PortfolioTracker
 from backtest.metrics import PerformanceMetrics
 
 
@@ -508,7 +506,6 @@ class SmartBetaBacktestEngine(BacktestEngine):
 
         try:
             import pandas as pd
-            import numpy as np
 
             # Get equity curve
             equity_curve = self.tracker.get_equity_curve()

@@ -101,7 +101,7 @@ class ContentExtractor:
                     return response.text
             elif response.status_code == 429:
                 # 触发速率限制，等待后重试一次
-                logger.warning(f"⚠️ Jina rate limit (429), waiting 60s before retry...")
+                logger.warning("⚠️ Jina rate limit (429), waiting 60s before retry...")
                 time.sleep(60)
                 return cls.extract_with_jina(url, timeout)
             else:

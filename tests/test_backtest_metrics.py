@@ -6,8 +6,6 @@ and metric validation logic.
 """
 
 import pytest
-from datetime import datetime, timedelta
-from unittest.mock import Mock, patch
 import pandas as pd
 
 import sys
@@ -19,7 +17,6 @@ sys.path.insert(0, str(PROJECT_ROOT / "deepfund" / "src"))
 from backtest.portfolio_tracker import PortfolioTracker
 from backtest.metrics import PerformanceMetrics
 from backtest.smart_beta_engine import SmartBetaBacktestEngine
-from deepfund.src.graph.schema import Portfolio, Position
 
 
 class TestPortfolioTracker:
@@ -892,9 +889,9 @@ class TestBacktestEngineNoDuplicateTrades:
             if ticker not in prices:
                 continue
 
-            action = decision.get('action', 'HOLD')
-            shares = decision.get('shares', 0)
-            price = prices[ticker]
+            decision.get('action', 'HOLD')
+            decision.get('shares', 0)
+            prices[ticker]
             already_applied = decision.get('_applied', False)
 
             # Skip if already applied

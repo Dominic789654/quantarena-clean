@@ -53,7 +53,7 @@ def portfolio_agent(state: FundState):
                 current_price = router.get_us_stock_last_close_price(ticker=ticker, trading_date=trading_date)
         except Exception as e:
             logger.error(f"Failed to fetch price data for {ticker}: {e}")
-            raise RuntimeError(f"Failed to make decision")
+            raise RuntimeError("Failed to make decision")
 
     # calculate the max position ratio
     max_position_ratio = resolve_max_position_ratio(personality, num_tickers)

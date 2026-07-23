@@ -1,5 +1,4 @@
 # src/prompts/report_agent.py
-from datetime import datetime
 from typing import Optional
 from .isq_prompt_generator import generate_isq_prompt_section
 
@@ -30,7 +29,7 @@ def format_signal_for_report(signal: any, index: int, cite_keys: Optional[list] 
     if isinstance(signal, dict):
         try:
             sig_obj = InvestmentSignal(**signal)
-        except:
+        except Exception:
             return f"--- 信号 [{index}] ---\n标题: {signal.get('title')}\n内容: {signal.get('content', '')[:500]}"
     else:
         sig_obj = signal

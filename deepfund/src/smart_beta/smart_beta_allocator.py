@@ -11,8 +11,8 @@ Main integration component that orchestrates:
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+from datetime import datetime
 import pandas as pd
 import numpy as np
 
@@ -20,7 +20,7 @@ from .config import SmartBetaConfig, get_smart_beta_config
 from .factor_engine import FactorEngine, FactorData
 from .optimizer import SmartBetaOptimizer, OptimizationResult
 from .index_constituents import IndexConstituentsProvider
-from .macro_analyzer import MacroStateAnalyzer, MacroAnalysis
+from .macro_analyzer import MacroStateAnalyzer
 from .news_freeze import NewsFreezeMechanism, FreezeDecision
 
 

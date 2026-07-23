@@ -1,6 +1,5 @@
 import os
-import json
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from datetime import datetime, timedelta
 from agno.agent import Agent
 from agno.models.base import Model
@@ -64,7 +63,6 @@ class ForecastAgent:
 
     def _get_next_trading_days(self, start_date: datetime, n_days: int) -> List[str]:
         """获取接下来的 n 个交易日（简化版，跳过周末）"""
-        from pandas.tseries.offsets import BusinessDay
 
         dates = []
         current = start_date

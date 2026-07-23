@@ -89,6 +89,16 @@ include = ["deepear*", "deepfund*", "quantarena*", "shared*", "trading*"]
 line-length = 100
 target-version = "py311"
 
+[tool.ruff.lint]
+# E402: the project's path-setup convention (shared.utils.path_manager
+# setup_paths() before package imports) makes module-level imports after
+# code endemic and intentional.
+ignore = ["E402"]
+
+[tool.ruff.lint.per-file-ignores]
+# Vendored-style ML predictor uses star imports internally.
+"deepear/src/utils/predictor/model/kronos.py" = ["F403", "F405"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [".", "deepear/src", "deepfund/src", "shared"]

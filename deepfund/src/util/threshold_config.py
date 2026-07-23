@@ -18,11 +18,9 @@ Usage:
     config = get_threshold_config()
 """
 
-import os
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional
-from functools import lru_cache
 from loguru import logger
 
 

@@ -5,8 +5,8 @@ Provides consistent timezone handling across the codebase, using UTC as the
 default timezone for all internal operations.
 """
 
-from datetime import datetime, timezone, timedelta
-from typing import Optional, Union
+from datetime import datetime, timezone
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 # Default timezone constants

@@ -5,7 +5,7 @@ import re
 import requests
 import time
 import threading
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.baidusearch import BaiduSearchTools
 from agno.agent import Agent
@@ -410,7 +410,7 @@ class SearchTools:
                 if isinstance(cached_data, list):
                     logger.info(f"ℹ️ Found structured search cache for: {query}")
                     return cached_data
-            except:
+            except Exception:
                 pass
         
         # 1.5 Smart Cache (Fuzzy + LLM)
@@ -421,7 +421,8 @@ class SearchTools:
                 # Filter by TTL
                 valid_candidates = []
                 for q in similar_queries:
-                    if q['query'] == query: continue 
+                    if q['query'] == query:
+                        continue 
                     q_time = datetime.fromisoformat(q['timestamp'])
                     if effective_ttl and (datetime.now() - q_time).total_seconds() > effective_ttl:
                         continue
@@ -460,7 +461,7 @@ class SearchTools:
                                         cached_data = json.loads(cache['results'])
                                         if isinstance(cached_data, list):
                                             return cached_data
-                                    except:
+                                    except Exception:
                                         pass
                             elif chosen['type'] == 'local_news':
                                 # Convert local news items to search result format
@@ -535,7 +536,7 @@ class SearchTools:
             if isinstance(results, str) and engine not in ["local", "jina"]:
                 try:
                     results = json.loads(results)
-                except:
+                except Exception:
                     pass
             
             # 转为统一格式
@@ -662,7 +663,7 @@ class SearchTools:
                              first_item = res_list[0]
                              if isinstance(first_item, dict) and 'title' in first_item:
                                  preview = f" (Contains: {first_item.get('title', '')[:50]}...)"
-                    except:
+                    except Exception:
                         pass
                     candidates_desc.append(f"[{i}] Old Search Query: '{c['query']}' {preview} (Time: {c['timestamp']})")
                 elif c['type'] == 'local_news':

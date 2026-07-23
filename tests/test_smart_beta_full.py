@@ -10,7 +10,7 @@ infrastructure from the backtest framework.
 import sys
 import os
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 import pandas as pd
 import numpy as np
 
@@ -25,7 +25,7 @@ tk_path = os.path.expanduser("~/tk.csv")
 if os.path.exists(tk_path):
     try:
         os.remove(tk_path)
-    except:
+    except Exception:
         pass
 
 print("=" * 70)
@@ -75,7 +75,7 @@ market_data = pd.DataFrame({
     'close': market_series
 }, index=dates)
 
-print(f"\n📊 Generated data:")
+print("\n📊 Generated data:")
 print(f"   Stock: {len(stock_data)} days, Price range: {stock_data['close'].min():.2f} - {stock_data['close'].max():.2f}")
 print(f"   Market: {len(market_data)} days, Price range: {market_data['close'].min():.2f} - {market_data['close'].max():.2f}")
 
@@ -89,7 +89,7 @@ factor_data = engine.calculate_all_factors(
     trade_date=datetime(2024, 3, 31)
 )
 
-print(f"\n✅ Factor Calculation Results:")
+print("\n✅ Factor Calculation Results:")
 print(f"   Ticker: {factor_data.ticker}")
 print(f"   Trade Date: {factor_data.trade_date.strftime('%Y-%m-%d')}")
 print(f"   Is Valid: {factor_data.is_valid}")
@@ -131,9 +131,9 @@ for ticker in tickers:
 # Equal weight benchmark
 benchmark_weights = {t: 0.1 for t in tickers}
 
-print(f"\n📊 Optimization setup:")
+print("\n📊 Optimization setup:")
 print(f"   Number of stocks: {len(tickers)}")
-print(f"   Benchmark: Equal weight (10% each)")
+print("   Benchmark: Equal weight (10% each)")
 
 # Run optimization
 print("\n🔧 Running quadratic optimization...")
@@ -144,14 +144,14 @@ result = optimizer.optimize(
     factor_data=factor_data_dict
 )
 
-print(f"\n✅ Optimization Results:")
+print("\n✅ Optimization Results:")
 print(f"   Success: {result.success}")
 print(f"   Message: {result.message}")
 print(f"   Tracking Error: {result.tracking_error:.6f}")
 print(f"   Turnover: {result.turnover:.4f}")
 
 if result.weights:
-    print(f"\n   Optimized Weights:")
+    print("\n   Optimized Weights:")
     sorted_weights = sorted(result.weights.items(), key=lambda x: x[1], reverse=True)
     for ticker, weight in sorted_weights:
         benchmark_diff = weight - benchmark_weights.get(ticker, 0)
@@ -176,7 +176,7 @@ factor_data_dict["HIGH_IVOL_1"] = FactorData(
 
 passed = optimizer.negative_screening(list(factor_data_dict.keys()), factor_data_dict)
 
-print(f"\n📊 Screening Results:")
+print("\n📊 Screening Results:")
 print(f"   Total stocks: {len(factor_data_dict)}")
 print(f"   Passed screening: {len(passed)}")
 print(f"   Screened out: {len(factor_data_dict) - len(passed)}")
@@ -190,7 +190,7 @@ print("\n" + "=" * 70)
 print("TEST 4: Macro State Analyzer")
 print("=" * 70)
 
-from smart_beta.macro_analyzer import MacroStateAnalyzer, MacroState
+from smart_beta.macro_analyzer import MacroStateAnalyzer
 
 analyzer = MacroStateAnalyzer(config)
 
@@ -236,7 +236,7 @@ print("\n" + "=" * 70)
 print("TEST 5: News Freeze Mechanism")
 print("=" * 70)
 
-from smart_beta.news_freeze import NewsFreezeMechanism, FreezeStatus
+from smart_beta.news_freeze import NewsFreezeMechanism
 
 freeze = NewsFreezeMechanism(config)
 
@@ -290,11 +290,11 @@ metrics = PerformanceMetrics.calculate_smart_beta_metrics(
     benchmark_returns_pct
 )
 
-print(f"\n📊 Simulated Portfolio Performance (120 days):")
+print("\n📊 Simulated Portfolio Performance (120 days):")
 print(f"   Cumulative Portfolio Return: {((1 + portfolio_returns).prod() - 1) * 100:.2f}%")
 print(f"   Cumulative Benchmark Return: {((1 + benchmark_returns).prod() - 1) * 100:.2f}%")
 
-print(f"\n🎯 Smart Beta Metrics:")
+print("\n🎯 Smart Beta Metrics:")
 print(f"   Tracking Error:  {metrics['tracking_error']:.2f}%")
 print(f"   Information Rat: {metrics['information_ratio']:.2f}")
 print(f"   Alpha:           {metrics['alpha']:.2f}%")
@@ -302,21 +302,21 @@ print(f"   Beta:            {metrics['beta']:.2f}")
 print(f"   Excess Return:   {metrics['excess_return']:.2f}%")
 
 # Interpretation
-print(f"\n📈 Interpretation:")
+print("\n📈 Interpretation:")
 if metrics['information_ratio'] > 0.5:
-    print(f"   ✓ Information Ratio > 0.5: GOOD risk-adjusted outperformance")
+    print("   ✓ Information Ratio > 0.5: GOOD risk-adjusted outperformance")
 else:
-    print(f"   ⚠ Information Ratio < 0.5: Room for improvement")
+    print("   ⚠ Information Ratio < 0.5: Room for improvement")
 
 if metrics['tracking_error'] < 5:
-    print(f"   ✓ Tracking Error < 5%: Good tracking of benchmark")
+    print("   ✓ Tracking Error < 5%: Good tracking of benchmark")
 else:
-    print(f"   ⚠ Tracking Error > 5%: High deviation from benchmark")
+    print("   ⚠ Tracking Error > 5%: High deviation from benchmark")
 
 if metrics['alpha'] > 0:
-    print(f"   ✓ Positive Alpha: Outperformance after adjusting for beta")
+    print("   ✓ Positive Alpha: Outperformance after adjusting for beta")
 else:
-    print(f"   ⚠ Negative Alpha: Underperformance after adjusting for beta")
+    print("   ⚠ Negative Alpha: Underperformance after adjusting for beta")
 
 # Summary
 print("\n" + "=" * 70)

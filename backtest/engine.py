@@ -6,9 +6,7 @@ Core orchestration for sequential backtesting simulation.
 Integrates with existing DeepFund workflow.
 """
 
-import sys
 import os
-from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
@@ -30,9 +28,9 @@ from backtest.execution import (
     record_portfolio_snapshot,
 )
 from backtest.mandate_interface import allocate_with_mandate
-from backtest.portfolio_tracker import Trade, PortfolioTracker
+from backtest.portfolio_tracker import PortfolioTracker
 from backtest.metrics import PerformanceMetrics
-from backtest.workflow_adapter import BacktestWorkflowAdapter, create_workflow_adapter
+from backtest.workflow_adapter import create_workflow_adapter
 from quantarena.benchmark_diagnostics import record_benchmark_diagnostic
 
 # Portfolio allocator for multi-stock allocation (B1 scheme)
@@ -259,11 +257,10 @@ class BacktestEngine(BaseBacktestEngine):
         # Step 1: Prefetch data
         if prefetch:
             try:
-                prefetch_stats = self.prefetch_data()
+                self.prefetch_data()
             except Exception as e:
                 logger.error(f"Data prefetch failed: {e}")
                 errors.append(f"Prefetch error: {str(e)}")
-                prefetch_stats = {}
 
         # Step 2: Get trading days
         trading_days = self.get_trading_days()
@@ -904,7 +901,7 @@ class BacktestEngine(BaseBacktestEngine):
         try:
             # ========== SMART PRIORITY MODE ==========
             if self.smart_priority_mode and self.workflow_adapter:
-                logger.info(f"Smart priority mode: Parallel signal collection + priority order decision making")
+                logger.info("Smart priority mode: Parallel signal collection + priority order decision making")
 
                 # Run with smart priority: parallel signals + priority order decisions
                 llm_decisions = self.workflow_adapter.run_single_day_with_smart_priority(
@@ -960,7 +957,7 @@ class BacktestEngine(BaseBacktestEngine):
                 )
 
                 # Phase 3: Unified portfolio allocation
-                logger.info(f"Portfolio mode: Making unified allocation decision...")
+                logger.info("Portfolio mode: Making unified allocation decision...")
                 target_positions = allocate_with_mandate(
                     self.portfolio_allocator,
                     signals=all_signals,

@@ -535,7 +535,7 @@ def run_deepear(args: argparse.Namespace) -> int:
         )
 
         print(f"\n{'=' * 60}")
-        print(f"DeepEar completed successfully!")
+        print("DeepEar completed successfully!")
         print(f"Output: {result}")
         return 0
 
@@ -615,7 +615,7 @@ def run_deepfund(args: argparse.Namespace) -> int:
         deepfund_main()
 
         print(f"\n{'=' * 60}")
-        print(f"DeepFund completed successfully!")
+        print("DeepFund completed successfully!")
         return 0
 
     except ImportError as e:

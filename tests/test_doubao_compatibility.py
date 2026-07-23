@@ -6,7 +6,6 @@ Tests function_calling without json_mode fallback
 import os
 import sys
 import unittest
-from typing import Dict, Any
 from pydantic import BaseModel, Field
 
 # Add paths
@@ -15,7 +14,6 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, "deepear", "src"))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "deepfund", "src"))
 
 from deepfund.src.llm.inference import agent_call, LLMConfig, get_model, reset_token_tracker, get_token_stats
-from deepfund.src.llm.provider import Provider
 
 
 # Test Pydantic models matching actual usage
@@ -92,7 +90,7 @@ class TestDoubaoCompatibility(unittest.TestCase):
         self.assertTrue(0 <= result.confidence <= 100)
         self.assertTrue(len(result.justification) > 0)
 
-        print(f"✅ Function calling works!")
+        print("✅ Function calling works!")
         print(f"   Signal: {result.signal}")
         print(f"   Confidence: {result.confidence}")
 
@@ -118,7 +116,7 @@ class TestDoubaoCompatibility(unittest.TestCase):
         self.assertGreater(agent_stats["input"], 0)
         self.assertGreater(agent_stats["output"], 0)
 
-        print(f"✅ Token tracking works!")
+        print("✅ Token tracking works!")
         print(f"   Total calls: {stats['calls']}")
         print(f"   Input tokens: {stats['total_input']}")
         print(f"   Output tokens: {stats['total_output']}")
@@ -182,7 +180,7 @@ class TestDoubaoCompatibility(unittest.TestCase):
         self.assertTrue(result.shares >= 0)
         self.assertTrue(len(result.reasoning) > 0)
 
-        print(f"✅ Portfolio manager decision:")
+        print("✅ Portfolio manager decision:")
         print(f"   Action: {result.action}")
         print(f"   Shares: {result.shares}")
         print(f"   Reasoning: {result.reasoning[:100]}...")
@@ -206,13 +204,13 @@ class TestDoubaoCompatibility(unittest.TestCase):
         # On failure, returns default Pydantic model
         self.assertIsInstance(result, AnalystSignal)
         # Default values should be present
-        print(f"✅ Error recovery works (returned default model)")
+        print("✅ Error recovery works (returned default model)")
 
     def test_07_structured_methods_order(self):
         """Verify that function_calling is attempted for Doubao"""
         from deepfund.src.llm.inference import LLMConfig
 
-        llm_cfg = LLMConfig(**self.config)
+        LLMConfig(**self.config)
         model_id = self.config["model"].lower()
 
         # Check logic from inference.py
@@ -220,8 +218,8 @@ class TestDoubaoCompatibility(unittest.TestCase):
             # Current logic puts json_mode first - this test documents that
             # After fix, should be ['function_calling'] only
             print(f"ℹ️ Model {model_id} detected as Doubao/Seed")
-            print(f"   Current structured_methods: ['json_mode', 'function_calling']")
-            print(f"   Recommended: ['function_calling'] (remove json_mode)")
+            print("   Current structured_methods: ['json_mode', 'function_calling']")
+            print("   Recommended: ['function_calling'] (remove json_mode)")
 
 
 class TestDoubaoWithoutJsonMode(unittest.TestCase):
@@ -231,7 +229,6 @@ class TestDoubaoWithoutJsonMode(unittest.TestCase):
         """Simulate the fixed logic without json_mode"""
         # This test demonstrates what happens when we remove json_mode
 
-        provider = "ark"
         model_id = "doubao-seed-2.0-code"
 
         # Simulate the fixed logic

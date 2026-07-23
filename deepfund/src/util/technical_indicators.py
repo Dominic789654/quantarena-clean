@@ -8,7 +8,6 @@ All functions use pandas/numpy vectorized operations for efficiency.
 import math
 from typing import Tuple, List, Optional
 import pandas as pd
-import numpy as np
 
 
 def calculate_ema(prices: pd.Series, window: int) -> pd.Series:

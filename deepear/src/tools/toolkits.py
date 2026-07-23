@@ -3,7 +3,6 @@ AlphaEar 工具包层 - Agno Toolkit 适配器
 复用 utils 中的底层工具实现，提供 Agno Agent 兼容的 Toolkit 接口
 """
 from datetime import datetime
-from typing import Optional
 from agno.tools import Toolkit
 from loguru import logger
 
@@ -274,7 +273,7 @@ class PolymarketToolkit(Toolkit):
             if volume:
                 try:
                     result += f"   交易量: ${float(volume):,.0f}\n"
-                except:
+                except Exception:
                     result += f"   交易量: {volume}\n"
             result += "\n"
         

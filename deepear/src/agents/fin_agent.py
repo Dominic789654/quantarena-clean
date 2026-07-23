@@ -1,7 +1,5 @@
-import os
 import time
-from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 from agno.agent import Agent
 from agno.models.base import Model
 from loguru import logger
@@ -12,7 +10,6 @@ from deepear.src.prompts.fin_agent import (
     get_fin_researcher_instructions,
     get_fin_analyst_instructions,
     get_fin_research_task,
-    format_research_context,
     get_fin_analysis_task,
     get_tracking_analysis_task
 )
@@ -256,7 +253,7 @@ class FinAgent:
         # 2. 分析师执行追踪更新
         tracking_task = get_tracking_analysis_task(old_signal, research_context_str)
         
-        logger.info(f"🧠 Tracking Phase 2: Analyst evaluating evolution...")
+        logger.info("🧠 Tracking Phase 2: Analyst evaluating evolution...")
         
         for attempt in range(max_retries):
             try:

@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List
 from deepear.src.schema.models import KLinePoint
 
 def get_forecast_adjustment_instructions(ticker: str, news_context: str, model_forecast: List[KLinePoint]):

@@ -3,7 +3,6 @@ from typing import List, Dict, Optional
 import akshare as ak
 import pandas as pd
 import re
-import sqlite3
 from requests.exceptions import RequestException
 from loguru import logger
 from deepear.src.utils.database_manager import DatabaseManager

@@ -8,7 +8,6 @@ timezone handling.
 import sys
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from zoneinfo import ZoneInfo
 from unittest.mock import patch
 
 # Add project paths

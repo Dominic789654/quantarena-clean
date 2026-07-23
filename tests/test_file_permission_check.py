@@ -9,10 +9,8 @@ import os
 import sys
 import stat
 import warnings
-import tempfile
 import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 # Add project paths
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -49,7 +47,7 @@ class TestFixTushareTokenFile:
         try:
             # os.access should return False (but may not in root/container environments)
             # We just verify the check works, not that permissions are enforced
-            has_access = os.access(str(tk_path), os.W_OK)
+            os.access(str(tk_path), os.W_OK)
             # In root containers, this may still be True, which is OK for our code
             # Our code checks os.access before attempting removal
         finally:

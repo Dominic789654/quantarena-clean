@@ -6,7 +6,7 @@ Tracks token usage and API call counts across the system.
 
 import threading
 from typing import Dict, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from loguru import logger
 
@@ -225,7 +225,7 @@ class UsageStats:
 
         # Token 统计
         tokens = summary['tokens']
-        print(f"\n📝 Token Usage:")
+        print("\n📝 Token Usage:")
         print(f"   Input:    {tokens['total_input']:,}")
         print(f"   Output:   {tokens['total_output']:,}")
         print(f"   Total:    {tokens['total']:,}")
@@ -233,25 +233,25 @@ class UsageStats:
             print(f"   Cached:   {tokens['cached']:,}")
 
         if tokens['by_provider']:
-            print(f"\n   By Provider:")
+            print("\n   By Provider:")
             for provider, stats in tokens['by_provider'].items():
                 print(f"     {provider}: {stats['total']:,} tokens")
 
         # API 调用统计
         api = summary['api_calls']
-        print(f"\n🔌 API Calls:")
+        print("\n🔌 API Calls:")
         print(f"   Total:    {api['total']}")
         print(f"   Success:  {api['success']}")
         print(f"   Failed:   {api['failed']}")
 
         if api['by_category']:
-            print(f"\n   By Category:")
+            print("\n   By Category:")
             for category, stats in api['by_category'].items():
                 status = "✅" if stats['failed'] == 0 else f"⚠️ {stats['failed']} failed"
                 print(f"     {category}: {stats['count']} calls {status}")
 
         # 费用估算
-        print(f"\n💰 Cost Estimation:")
+        print("\n💰 Cost Estimation:")
         # DeepSeek 价格: ¥1/百万 input, ¥2/百万 output
         # DashScope 价格: 约相同
         input_cost = tokens['total_input'] / 1_000_000 * 1  # ¥1/百万

@@ -5,7 +5,6 @@ Unit tests for smart priority sorting in workflow adapter.
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 
 # Add project paths
 PROJECT_ROOT = Path(__file__).parent.parent

@@ -4,7 +4,6 @@ Link: https://yfinance-python.org/
 """
 
 import yfinance as yf
-from typing import Optional
 from datetime import datetime
 from apis.common_model import MediaNews
 

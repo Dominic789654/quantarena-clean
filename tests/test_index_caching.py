@@ -12,8 +12,8 @@ import os
 import sys
 import tempfile
 import pytest
-from datetime import datetime, timedelta
-from unittest.mock import Mock, patch, MagicMock
+from datetime import datetime
+from unittest.mock import Mock, patch
 import pandas as pd
 
 # Add project paths
