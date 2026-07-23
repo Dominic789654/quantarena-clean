@@ -41,6 +41,7 @@ from backtest.workflow.phase1_artifact import (  # noqa: F401
     SharedPhase1ArtifactCache,
 )
 from backtest.workflow.signal_cache import SharedAnalystSignalCache  # noqa: F401
+from backtest.workflow import scoring
 
 
 class BacktestWorkflowAdapter:
@@ -1199,111 +1200,16 @@ class BacktestWorkflowAdapter:
         return justification.startswith("[Error]")
 
     def _calculate_priority_score(self, analyst_signals: List[Any]) -> float:
-        """
-        Calculate priority score for smart sorting.
-
-        Scoring rules:
-        1. Signal strength: BULLISH=3, NEUTRAL=2, BEARISH=1
-        2. Weighted by confidence
-        3. Higher for signal consistency
-        4. Bonus for strong bullish consensus
-        """
-        if not analyst_signals:
-            return 0.0
-
-        # Signal mapping
-        SIGNAL_SCORE = {
-            "BULLISH": 3.0,
-            "NEUTRAL": 2.0,
-            "BEARISH": 1.0
-        }
-
-        # Calculate weighted signal score
-        scores = []
-        signal_values = []
-
-        for signal in analyst_signals:
-            sig_str = self._signal_label(signal)
-            confidence = getattr(signal, 'confidence', 0.5)
-
-            base_score = SIGNAL_SCORE.get(sig_str, 2.0)
-            weighted_score = base_score * confidence
-            scores.append(weighted_score)
-            signal_values.append(SIGNAL_SCORE.get(sig_str, 2.0))
-
-        # 1. Average weighted score
-        avg_score = sum(scores) / len(scores) if scores else 0.0
-
-        # 2. Signal consistency (1 - standard deviation, higher is better)
-        if len(signal_values) > 1:
-            import numpy as np
-            std_dev = np.std(signal_values)
-            consistency = 1.0 - (std_dev / 2.0)  # Normalize to 0-1
-        else:
-            consistency = 1.0
-
-        # 3. Bonus for strong bullish consensus
-        bullish_count = sum(1 for s in analyst_signals if self._signal_label(s) == "BULLISH")
-        bullish_ratio = bullish_count / len(analyst_signals)
-        bullish_bonus = 0.5 if bullish_ratio >= 0.7 else 0.0  # >70% bullish consensus
-
-        # 4. Penalty for strong bearish consensus (still process, but lower priority)
-        bearish_count = sum(1 for s in analyst_signals if self._signal_label(s) == "BEARISH")
-        bearish_ratio = bearish_count / len(analyst_signals)
-        bearish_penalty = -0.3 if bearish_ratio >= 0.7 else 0.0
-
-        # Combine scores
-        final_score = avg_score * consistency + bullish_bonus + bearish_penalty
-
-        return round(final_score, 3)
+        """Calculate priority score for smart sorting (delegates to backtest.workflow.scoring)."""
+        return scoring._calculate_priority_score(analyst_signals)
 
     def _calculate_signal_consistency(self, analyst_signals: List[Any]) -> float:
-        """Calculate consistency of analyst signals (0-1, higher = more consistent)."""
-        if len(analyst_signals) <= 1:
-            return 1.0
+        """Calculate consistency of analyst signals (delegates to backtest.workflow.scoring)."""
+        return scoring._calculate_signal_consistency(analyst_signals)
 
-        SIGNAL_VALUE = {
-            "BULLISH": 1.0,
-            "NEUTRAL": 0.5,
-            "BEARISH": 0.0
-        }
+    _signal_label = staticmethod(scoring._signal_label)
 
-        try:
-            import numpy as np
-            values = []
-            for signal in analyst_signals:
-                sig_str = self._signal_label(signal)
-                values.append(SIGNAL_VALUE.get(sig_str, 0.5))
-
-            # Calculate coefficient of variation (lower = more consistent)
-            std_dev = np.std(values)
-            mean_val = np.mean(values)
-            if mean_val == 0:
-                return 1.0  # All BEARISH is consistent
-
-            cv = std_dev / mean_val
-            consistency = 1.0 - min(cv, 1.0)  # Convert to 0-1 scale
-
-            return round(consistency, 3)
-        except Exception:
-            return 0.5  # Default if calculation fails
-
-    @staticmethod
-    def _signal_label(signal: Any) -> str:
-        """Normalize signal enum/string to uppercase label."""
-        return str(getattr(signal, "signal", "NEUTRAL")).strip().upper()
-
-    @staticmethod
-    def _aggregate_signal_from_summary(summary: Dict[str, Any]) -> str:
-        """Collapse analyst counts into a single portfolio-level signal label."""
-        bullish_count = int(summary.get("bullish_count", 0) or 0)
-        bearish_count = int(summary.get("bearish_count", 0) or 0)
-
-        if bullish_count > bearish_count:
-            return "BULLISH"
-        if bearish_count > bullish_count:
-            return "BEARISH"
-        return "NEUTRAL"
+    _aggregate_signal_from_summary = staticmethod(scoring._aggregate_signal_from_summary)
 
     def collect_signals_only(
         self,
@@ -1479,45 +1385,8 @@ class BacktestWorkflowAdapter:
         return signals
 
     def _get_smart_priority_order(self, signals: Dict[str, Any]) -> List[str]:
-        """
-        Determine smart priority order based on collected signals.
-
-        Rules:
-        1. Higher priority score first
-        2. For equal scores, higher bullish count first
-        3. For equal bullish count, higher consistency first
-        """
-        if not signals:
-            return self.tickers.copy()
-
-        # Create list of (ticker, score, details) for sorting
-        ticker_data = []
-        for ticker, data in signals.items():
-            summary = data.get("summary", {})
-            ticker_data.append((
-                ticker,
-                data.get("priority_score", 0.0),
-                summary.get("bullish_count", 0),
-                summary.get("signal_consistency", 0.0),
-                summary.get("avg_confidence", 0.0)
-            ))
-
-        # Sort by priority score (descending), then bullish count, then consistency
-        sorted_data = sorted(
-            ticker_data,
-            key=lambda x: (x[1], x[2], x[3], x[4]),
-            reverse=True
-        )
-
-        # Extract sorted tickers
-        sorted_tickers = [item[0] for item in sorted_data]
-
-        # Log the sorting decision
-        logger.info(f"Smart priority order: {sorted_tickers}")
-        for ticker, score, bullish, consistency, confidence in sorted_data:
-            logger.info(f"  {ticker}: score={score:.3f}, bullish={bullish}, consistency={consistency:.3f}, confidence={confidence:.3f}")
-
-        return sorted_tickers
+        """Determine smart priority order based on collected signals (delegates to backtest.workflow.scoring)."""
+        return scoring._get_smart_priority_order(signals, self.tickers)
 
     def get_current_portfolio(self) -> Dict:
         """Get current portfolio state."""
