@@ -11,8 +11,6 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from datetime import UTC, datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Lock
 from loguru import logger
 
 # Setup project paths using unified path manager
@@ -38,7 +36,7 @@ from backtest.workflow.phase1_artifact import (  # noqa: F401
     SharedPhase1ArtifactCache,
 )
 from backtest.workflow.signal_cache import SharedAnalystSignalCache  # noqa: F401
-from backtest.workflow import scoring, decision_apply, db_store, company_news_signature
+from backtest.workflow import scoring, decision_apply, db_store, company_news_signature, signal_collection
 
 
 class BacktestWorkflowAdapter:
@@ -741,6 +739,16 @@ class BacktestWorkflowAdapter:
 
         return artifact
 
+    # Parallel analyst-signal collection engine (delegates to
+    # backtest.workflow.signal_collection). Same-named delegator methods
+    # are kept for all six names below because several tests replace
+    # `collect_signals_only_parallel_v2` with an instance-level
+    # `monkeypatch.setattr(adapter, ...)` or a duck-typed fake adapter
+    # entirely (tests/test_multi_personality_day_orchestrator.py,
+    # tests/test_fof_engine.py); every internal call between these six
+    # (and to the company-news/scoring delegators from earlier Phase 3
+    # steps) goes through `self.<name>(...)`, never a direct module call,
+    # so any such patch keeps propagating.
     def _process_single_ticker_for_signals_v2(
         self,
         ticker: str,
@@ -750,143 +758,9 @@ class BacktestWorkflowAdapter:
         config: Dict[str, Any],
         portfolio_dict: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """
-        Process a single ticker to collect ALL analyst signals.
-        Enhanced version for smart priority sorting.
-
-        Returns:
-            Enhanced signal dict with all analyst signals and metadata.
-        """
-        from agents.registry import AgentRegistry
-        from graph.schema import FundState, Portfolio, Position, AnalystSignal
-        from graph.constants import Signal
-
-        # Create a copy of portfolio for this thread
-        portfolio = Portfolio(
-            id=portfolio_dict["id"],
-            cashflow=portfolio_dict["cashflow"],
-            positions={
-                t: Position(
-                    shares=pos.get("shares", 0),
-                    value=pos.get("value", 0)
-                )
-                for t, pos in portfolio_dict["positions"].items()
-            }
+        return signal_collection._process_single_ticker_for_signals_v2(
+            self, ticker, trading_date, trading_date_dt, price, config, portfolio_dict
         )
-
-        try:
-            prefetched_analyst_data = dict(config.get("prefetched_analyst_inputs", {}).get(ticker, {}))
-            state = FundState(
-                ticker=ticker,
-                exp_name=config["exp_name"],
-                trading_date=trading_date_dt,
-                market=self.market,
-                api_source=self.api_source,
-                llm_config=config["llm"],
-                portfolio=portfolio,
-                num_tickers=len(config["tickers"]),
-                personality=self.personality,
-                analyst_signals=[],
-                decision=None,
-                current_price=price,
-                db_path=self.db_path,
-                is_backtest=True,
-                skip_db_writes=True,
-                prefetched_analyst_data=prefetched_analyst_data,
-            )
-
-            workflow_analysts = config.get("workflow_analysts", [])
-            valid_analysts = [a for a in workflow_analysts if AgentRegistry.check_agent_key(a)]
-            invalid_analysts = [a for a in workflow_analysts if a not in valid_analysts]
-            if invalid_analysts:
-                logger.warning(f"Skipping invalid analysts for {ticker}: {invalid_analysts}")
-
-            # Run analysts only and collect all emitted signals.
-            analyst_signals: List[AnalystSignal] = []
-            for analyst_key in valid_analysts:
-                analyst_input_signature: Optional[str] = None
-                try:
-                    analyst_input_signature = self._resolve_analyst_input_signature(
-                        trading_date,
-                        ticker,
-                        analyst_key,
-                        prefetched_analyst_data,
-                    )
-                except Exception as signature_error:
-                    logger.warning(
-                        f"Shared analyst input signature resolution failed for {analyst_key} {ticker} {trading_date}: {signature_error}"
-                    )
-
-                cached_signals = self._load_shared_analyst_signals(
-                    trading_date=trading_date,
-                    ticker=ticker,
-                    analyst_key=analyst_key,
-                    llm_config=config["llm"],
-                    input_signature=analyst_input_signature,
-                )
-                if cached_signals is not None:
-                    analyst_signals.extend(cached_signals)
-                    continue
-
-                analyst_func = AgentRegistry.get_agent_func_by_key(analyst_key)
-                if analyst_func is None:
-                    logger.warning(f"Analyst function not found: {analyst_key}")
-                    continue
-
-                try:
-                    result = analyst_func(state)
-                    new_signals = result.get("analyst_signals", [])
-                    analyst_signals.extend(new_signals)
-                    self._save_shared_analyst_signals(
-                        trading_date=trading_date,
-                        ticker=ticker,
-                        analyst_key=analyst_key,
-                        llm_config=config["llm"],
-                        analyst_signals=new_signals,
-                        input_signature=analyst_input_signature,
-                    )
-                except Exception as analyst_error:
-                    logger.error(f"Analyst {analyst_key} failed for {ticker}: {analyst_error}")
-                    analyst_signals.append(
-                        AnalystSignal(
-                            signal=Signal.NEUTRAL,
-                            justification=f"[Error] {analyst_key} failed: {analyst_error}",
-                        )
-                    )
-
-            # Calculate priority score
-            priority_score = self._calculate_priority_score(analyst_signals)
-
-            return {
-                "ticker": ticker,
-                "price": price,
-                "analyst_signals": analyst_signals,
-                "priority_score": priority_score,
-                "summary": {
-                    "bullish_count": sum(1 for s in analyst_signals if self._signal_label(s) == "BULLISH"),
-                    "bearish_count": sum(1 for s in analyst_signals if self._signal_label(s) == "BEARISH"),
-                    "neutral_count": sum(1 for s in analyst_signals if self._signal_label(s) == "NEUTRAL"),
-                    "avg_confidence": sum(getattr(s, 'confidence', 0.5) for s in analyst_signals) / len(analyst_signals) if analyst_signals else 0.0,
-                    "signal_consistency": self._calculate_signal_consistency(analyst_signals)
-                }
-            }
-        except Exception as e:
-            import traceback
-            logger.error(f"Error collecting signals for {ticker} on {trading_date}: {e}")
-            logger.error(traceback.format_exc())
-            return {
-                "ticker": ticker,
-                "price": price,
-                "analyst_signals": [],
-                "priority_score": 0.0,
-                "summary": {
-                    "bullish_count": 0,
-                    "bearish_count": 0,
-                    "neutral_count": 0,
-                    "avg_confidence": 0.0,
-                    "signal_consistency": 0.0
-                }
-            }
 
     def _load_shared_analyst_signals(
         self,
@@ -896,26 +770,9 @@ class BacktestWorkflowAdapter:
         llm_config: Dict[str, Any],
         input_signature: Optional[str] = None,
     ):
-        if self.shared_analyst_cache is None:
-            return None
-        try:
-            signals = self.shared_analyst_cache.load(
-                trading_date=trading_date,
-                market=self.market,
-                ticker=ticker,
-                analyst_key=analyst_key,
-                llm_provider=str(llm_config.get("provider", "")),
-                llm_model=str(llm_config.get("model", "")),
-                input_signature=input_signature,
-            )
-        except Exception as cache_error:
-            logger.warning(
-                f"Shared analyst cache load failed for {analyst_key} {ticker} {trading_date}: {cache_error}"
-            )
-            return None
-        if signals is not None:
-            logger.debug(f"Shared analyst cache hit: {analyst_key} {ticker} {trading_date}")
-        return signals
+        return signal_collection._load_shared_analyst_signals(
+            self, trading_date, ticker, analyst_key, llm_config, input_signature
+        )
 
     def _save_shared_analyst_signals(
         self,
@@ -926,32 +783,11 @@ class BacktestWorkflowAdapter:
         analyst_signals: List[Any],
         input_signature: Optional[str] = None,
     ) -> None:
-        if self.shared_analyst_cache is None or not analyst_signals:
-            return
-        if any(self._signal_has_error(signal) for signal in analyst_signals):
-            return
-        try:
-            self.shared_analyst_cache.save(
-                trading_date=trading_date,
-                market=self.market,
-                ticker=ticker,
-                analyst_key=analyst_key,
-                llm_provider=str(llm_config.get("provider", "")),
-                llm_model=str(llm_config.get("model", "")),
-                analyst_signals=analyst_signals,
-                input_signature=input_signature,
-            )
-        except Exception as cache_error:
-            logger.warning(
-                f"Shared analyst cache save failed for {analyst_key} {ticker} {trading_date}: {cache_error}"
-            )
+        signal_collection._save_shared_analyst_signals(
+            self, trading_date, ticker, analyst_key, llm_config, analyst_signals, input_signature
+        )
 
-    @staticmethod
-    def _signal_has_error(signal: Any) -> bool:
-        justification = getattr(signal, "justification", "")
-        if not isinstance(justification, str):
-            return False
-        return justification.startswith("[Error]")
+    _signal_has_error = staticmethod(signal_collection._signal_has_error)
 
     def _calculate_priority_score(self, analyst_signals: List[Any]) -> float:
         """Calculate priority score for smart sorting (delegates to backtest.workflow.scoring)."""
@@ -970,42 +806,8 @@ class BacktestWorkflowAdapter:
         trading_date: str,
         prices: Dict[str, float]
     ) -> Dict[str, Any]:
-        """
-        只收集分析师信号，不做最终交易决策。
-        用于 B1 方案：先收集所有股票信号，再统一做组合分配。
-
-        Args:
-            trading_date: 交易日期 (YYYY-MM-DD)
-            prices: {ticker: price} 当前价格
-
-        Returns:
-            {ticker: dict} 每只股票的聚合信号，保留 summary 以兼容 profile-specific logic
-        """
-        # Use enhanced version with smart priority
-        enhanced_signals = self.collect_signals_only_parallel_v2(trading_date, prices)
-
-        # Convert to old format for backward compatibility
-        signals = {}
-        for ticker, data in enhanced_signals.items():
-            summary = dict(data.get("summary", {}) or {})
-            bullish = int(summary.get("bullish_count", 0) or 0)
-            bearish = int(summary.get("bearish_count", 0) or 0)
-            neutral = int(summary.get("neutral_count", 0) or 0)
-            signals[ticker] = {
-                "ticker": ticker,
-                "signal": self._aggregate_signal_from_summary(summary),
-                "justification": (
-                    "Enhanced signals with priority score "
-                    f"{data.get('priority_score', 0.0)}; counts "
-                    f"B={bullish}, N={neutral}, BR={bearish}"
-                ),
-                "confidence": summary.get("avg_confidence", 0.5),
-                "summary": summary,
-                "priority_score": data.get("priority_score", 0.0),
-                "analyst_signals": list(data.get("analyst_signals", []) or []),
-            }
-
-        return signals
+        """只收集分析师信号，不做最终交易决策（delegates to backtest.workflow.signal_collection）。"""
+        return signal_collection.collect_signals_only(self, trading_date, prices)
 
     def collect_signals_only_parallel_v2(
         self,
@@ -1014,129 +816,10 @@ class BacktestWorkflowAdapter:
         max_workers: int = 5,
         prefetched_analyst_inputs: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """
-        Enhanced parallel version for smart priority sorting.
-        Collects ALL analyst signals with priority scores.
-
-        Args:
-            trading_date: 交易日期 (YYYY-MM-DD)
-            prices: {ticker: price} 当前价格
-            max_workers: 最大并行线程数 (默认 5)
-
-        Returns:
-            {ticker: EnhancedSignal} 包含所有分析师信号和优先级评分
-        """
-        signals = {}
-        signals_lock = Lock()
-
-        try:
-            from util.db_helper import db_initialize, get_db
-            from database.sqlite_helper import SQLiteDB
-
-            db_initialize(use_local_db=True, db_path=self.db_path)
-            db = get_db()
-            if isinstance(db, SQLiteDB):
-                db.set_db_path(self.db_path)
-
-            trading_date_dt = datetime.strptime(trading_date, "%Y-%m-%d")
-
-            # Build workflow config (shared across all threads)
-            config = {
-                "llm": {
-                    "provider": self.llm_provider,
-                    "model": self.llm_model
-                },
-                "tickers": self.tickers,
-                "exp_name": self.exp_name,
-                "trading_date": trading_date_dt,
-                "cashflow": self.current_portfolio["cashflow"],
-                "workflow_analysts": self.analysts,
-                "planner_mode": False,
-                "personality": self.personality,
-                "api_source": self.api_source,
-                "prefetched_analyst_inputs": prefetched_analyst_inputs or {},
-            }
-
-            # Create Portfolio dict for serialization across threads
-            portfolio_dict = {
-                "id": self.current_portfolio["id"],
-                "cashflow": self.current_portfolio["cashflow"],
-                "positions": self.current_portfolio["positions"]
-            }
-
-            # Filter tickers that have prices
-            tickers_to_process = [t for t in self.tickers if t in prices]
-            if len(tickers_to_process) < len(self.tickers):
-                missing = set(self.tickers) - set(tickers_to_process)
-                logger.warning(f"No price for {missing} on {trading_date}, skipping")
-
-            # Process tickers in parallel using ThreadPoolExecutor
-            logger.info(f"Processing {len(tickers_to_process)} tickers with {max_workers} workers for smart priority")
-
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all tasks
-                future_to_ticker = {
-                    executor.submit(
-                        self._process_single_ticker_for_signals_v2,
-                        ticker,
-                        trading_date,
-                        trading_date_dt,
-                        prices[ticker],
-                        config,
-                        portfolio_dict
-                    ): ticker
-                    for ticker in tickers_to_process
-                }
-
-                # Collect results as they complete
-                for future in as_completed(future_to_ticker):
-                    ticker = future_to_ticker[future]
-                    try:
-                        result = future.result()
-                        if result:
-                            with signals_lock:
-                                signals[result["ticker"]] = result
-                    except Exception as e:
-                        logger.error(f"Thread error for {ticker}: {e}")
-                        with signals_lock:
-                            signals[ticker] = {
-                                "ticker": ticker,
-                                "price": prices.get(ticker, 0.0),
-                                "analyst_signals": [],
-                                "priority_score": 0.0,
-                                "summary": {
-                                    "bullish_count": 0,
-                                    "bearish_count": 0,
-                                    "neutral_count": 0,
-                                    "avg_confidence": 0.0,
-                                    "signal_consistency": 0.0
-                                }
-                            }
-
-        except ImportError as e:
-            logger.error(f"Failed to import DeepFund modules: {e}")
-            # Return empty signals for all
-            for ticker in self.tickers:
-                if ticker in prices:
-                    signals[ticker] = {
-                        "ticker": ticker,
-                        "price": prices[ticker],
-                        "analyst_signals": [],
-                        "priority_score": 0.0,
-                        "summary": {
-                            "bullish_count": 0,
-                            "bearish_count": 0,
-                            "neutral_count": 0,
-                            "avg_confidence": 0.0,
-                            "signal_consistency": 0.0
-                        }
-                    }
-
-        finally:
-            pass
-
-        logger.info(f"Collected enhanced signals for {len(signals)} tickers on {trading_date}")
-        return signals
+        """Enhanced parallel signal collection (delegates to backtest.workflow.signal_collection)."""
+        return signal_collection.collect_signals_only_parallel_v2(
+            self, trading_date, prices, max_workers, prefetched_analyst_inputs
+        )
 
     def _get_smart_priority_order(self, signals: Dict[str, Any]) -> List[str]:
         """Determine smart priority order based on collected signals (delegates to backtest.workflow.scoring)."""
