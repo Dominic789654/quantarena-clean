@@ -7,8 +7,6 @@ Combines DeepEar (intelligence gathering) and DeepFund (trading analysis)
 
 import argparse
 import sys
-from datetime import datetime
-from typing import Optional, Any
 
 # Fix Tushare's tk.csv issue BEFORE any other imports!
 from runner.bootstrap import _fix_tushare_token_file, load_dotenv_file  # noqa: F401
@@ -59,70 +57,10 @@ from runner.modes.pipeline import run_full_pipeline  # noqa: F401
 from runner.runtime_options import VALID_PERSONALITIES, _parse_tickers_arg  # noqa: F401
 
 
-def _validate_backtest_date_range(start_date: Optional[str], end_date: Optional[str], mode_name: str) -> bool:
-    """Validate CLI date args for backtesting modes."""
-    if not start_date or not end_date:
-        print(f"ERROR: --start-date and --end-date are required for {mode_name}")
-        print("Example: --start-date 2024-01-01 --end-date 2024-01-31")
-        return False
-    try:
-        start = datetime.strptime(start_date, "%Y-%m-%d")
-        end = datetime.strptime(end_date, "%Y-%m-%d")
-        if start > end:
-            print("ERROR: start-date must be before end-date")
-            return False
-    except ValueError as e:
-        print(f"ERROR: Invalid date format: {e}. Use YYYY-MM-DD.")
-        return False
-    return True
-
-
 from runner.runtime_options import _parse_optional_csv  # noqa: F401
 
 
 from runner.cli_support import _print_backtest_mode_config, _print_backtest_result  # noqa: F401
-
-
-def _execute_backtest_mode(args: argparse.Namespace, run_backtest: Any) -> int:
-    """Execute backtest mode after imports are ready."""
-    if not _validate_backtest_date_range(args.start_date, args.end_date, mode_name="backtest mode"):
-        return 1
-    try:
-        runtime = _resolve_backtest_runtime_options(args)
-    except ValueError as exc:
-        print(f"ERROR: {exc}")
-        return 1
-    if not _validate_backtest_environment_for_runtime(runtime):
-        return 1
-    _print_backtest_mode_config(
-        args,
-        runtime["analysts"],
-        market=runtime["market"],
-        cashflow=runtime["cashflow"],
-        personality=runtime["personality"],
-        use_llm=runtime["use_llm"],
-        benchmark=runtime["config"].get("benchmark"),
-    )
-    if runtime["config_path"]:
-        print(f"Using config: {runtime['config_path']}")
-    result = run_backtest(
-        tickers=runtime["tickers"],
-        start_date=args.start_date,
-        end_date=args.end_date,
-        initial_cash=runtime["cashflow"],
-        market=runtime["market"],
-        prefetch_only=args.prefetch_only,
-        config=runtime["config"],
-        use_llm=runtime["use_llm"],
-        analysts=runtime["analysts"],
-        personality=runtime["personality"],
-    )
-    if args.prefetch_only:
-        print("\n" + "=" * 60)
-        print("Data prefetch completed!")
-        print("=" * 60)
-        return 0
-    return _print_backtest_result(result) if result else 1
 
 
 from runner.runtime_options import _parse_personalities_arg  # noqa: F401
@@ -134,85 +72,12 @@ from runner.cli_support import (  # noqa: F401
 )
 
 
-def run_backtest_mode(args: argparse.Namespace) -> int:
-    """Run backtesting simulation."""
-    print("\n" + "=" * 60)
-    print("Mode: Backtesting")
-    print("=" * 60 + "\n")
-
-    try:
-        from backtest.engine import run_backtest
-        return _execute_backtest_mode(args, run_backtest)
-
-    except ImportError as e:
-        print(f"ERROR: Failed to import backtest modules: {e}")
-        print("Make sure the backtest module is properly installed.")
-        import traceback
-        traceback.print_exc()
-        return 1
-    except Exception as e:
-        print(f"ERROR: Backtest execution failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
-
-
-def run_multi_personality_mode(args: argparse.Namespace) -> int:
-    """Run multi-personality parallel backtesting."""
-    print("\n" + "=" * 60)
-    print("Mode: Multi-Personality Parallel Backtesting")
-    print("=" * 60 + "\n")
-
-    try:
-        from backtest.multi_personality_engine import run_multi_personality_backtest
-
-        if not _validate_backtest_date_range(args.start_date, args.end_date, mode_name="multi-personality mode"):
-            return 1
-        try:
-            runtime = _resolve_multi_personality_runtime_options(args)
-        except ValueError as exc:
-            print(f"ERROR: {exc}")
-            return 1
-        if not _validate_backtest_environment_for_runtime(runtime):
-            return 1
-
-        _print_multi_personality_config(
-            args,
-            runtime["personalities"],
-            runtime["analysts"],
-            market=runtime["market"],
-            cashflow=runtime["cashflow"],
-        )
-        if runtime["config_path"]:
-            print(f"Using config: {runtime['config_path']}")
-
-        comparison = run_multi_personality_backtest(
-            tickers=runtime["tickers"],
-            start_date=args.start_date,
-            end_date=args.end_date,
-            personalities=runtime["personalities"],
-            initial_cash=runtime["cashflow"],
-            market=runtime["market"],
-            analysts=runtime["analysts"],
-            db_path="data/signal_flux.db",
-            config=runtime["config"],
-            use_llm=runtime["use_llm"],
-            max_workers=args.max_workers,
-        )
-        _print_multi_personality_results(comparison, runtime["cashflow"])
-        return 0
-
-    except ImportError as e:
-        print(f"ERROR: Failed to import multi-personality modules: {e}")
-        print("Make sure the backtest module is properly installed.")
-        import traceback
-        traceback.print_exc()
-        return 1
-    except Exception as e:
-        print(f"ERROR: Multi-personality backtest failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
+from runner.modes.backtest import (  # noqa: F401
+    _validate_backtest_date_range,
+    _execute_backtest_mode,
+    run_backtest_mode,
+)
+from runner.modes.multi_personality import run_multi_personality_mode  # noqa: F401
 
 
 def main() -> int:
