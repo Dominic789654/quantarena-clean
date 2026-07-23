@@ -16,6 +16,7 @@ from deepear.src.utils.stock_tools import StockTools
 import re
 from deepear.src.schema.models import ClusterContext, ForecastResult
 from deepear.src.agents.forecast_agent import ForecastAgent
+from deepear.src.agents.report.retry import run_agent_with_retry
 from deepear.src.prompts.report_agent import (
     get_report_planner_base_instructions,
     get_report_writer_base_instructions,
@@ -112,47 +113,20 @@ class ReportAgent:
 
         Returns:
             响应内容，如果所有重试都失败则返回 None
+
+        Delegates to `deepear.src.agents.report.retry.run_agent_with_retry`
+        (extract-report-agent-retry-helper), forwarding the three timeout/retry
+        constants as explicit arguments so per-instance overrides (e.g. tests
+        setting `agent.LLM_RETRY_DELAY = 0.01`) keep working unchanged.
         """
-        import threading
-
-        for attempt in range(self.LLM_MAX_RETRIES + 1):
-            try:
-                # 使用线程和超时控制
-                result = [None]
-                exception = [None]
-
-                def run_in_thread():
-                    try:
-                        response = agent.run(prompt)
-                        result[0] = response.content if hasattr(response, 'content') else str(response)
-                    except Exception as e:
-                        exception[0] = e
-
-                thread = threading.Thread(target=run_in_thread)
-                thread.start()
-                thread.join(timeout=self.LLM_TIMEOUT_SECONDS)
-
-                if thread.is_alive():
-                    # 超时
-                    logger.warning(f"⚠️ {context} timed out after {self.LLM_TIMEOUT_SECONDS}s (attempt {attempt + 1}/{self.LLM_MAX_RETRIES + 1})")
-                    if attempt < self.LLM_MAX_RETRIES:
-                        time.sleep(self.LLM_RETRY_DELAY * (attempt + 1))  # 指数退避
-                        continue
-                    return None
-
-                if exception[0] is not None:
-                    raise exception[0]
-
-                return result[0]
-
-            except Exception as e:
-                logger.warning(f"⚠️ {context} failed (attempt {attempt + 1}/{self.LLM_MAX_RETRIES + 1}): {e}")
-                if attempt < self.LLM_MAX_RETRIES:
-                    time.sleep(self.LLM_RETRY_DELAY * (attempt + 1))  # 指数退避
-                    continue
-
-        logger.error(f"❌ {context} failed after all retries")
-        return None
+        return run_agent_with_retry(
+            agent,
+            prompt,
+            context,
+            max_retries=self.LLM_MAX_RETRIES,
+            timeout_seconds=self.LLM_TIMEOUT_SECONDS,
+            retry_delay=self.LLM_RETRY_DELAY,
+        )
 
     @staticmethod
     def _make_cite_key(url: str, title: str = "", source_name: str = "") -> str:
