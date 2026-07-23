@@ -17,6 +17,8 @@ import re
 from deepear.src.schema.models import ClusterContext, ForecastResult
 from deepear.src.agents.forecast_agent import ForecastAgent
 from deepear.src.agents.report.retry import run_agent_with_retry
+from deepear.src.agents.report.chart_sanitizer import sanitize_json_chart_blocks
+from deepear.src.agents.report.structured_report import build_structured_report as _build_structured_report_impl
 from deepear.src.prompts.report_agent import (
     get_report_planner_base_instructions,
     get_report_writer_base_instructions,
@@ -507,172 +509,14 @@ class ReportAgent:
     def _sanitize_json_chart_blocks(text: str) -> str:
         """Best-effort repair for malformed json-chart fenced blocks.
 
-        Common failure mode: model outputs an opening ```json-chart but forgets to close it.
-        That causes downstream chart processing to miss it and swallows the rest of the report.
-
-        Strategy:
-        - For each opening fence, locate the first JSON object and close the fence right after
-          the JSON object (balanced braces, ignoring braces inside strings).
-        - If a closing fence already exists after the JSON object, leave as-is.
+        Delegates to `deepear.src.agents.report.chart_sanitizer.sanitize_json_chart_blocks`
+        (extract-report-agent-pure-chart-and-structured-report-functions). The
+        original method touched no instance/class state, so this is a pure
+        pass-through -- kept as a real staticmethod (not a bare attribute
+        alias) so existing/future monkeypatches of the name keep intercepting
+        the internal `self._sanitize_json_chart_blocks(...)` call site.
         """
-
-        if not text:
-            return text
-
-        # Phase 0: Normalize malformed json-chart fences.
-        # We only touch fences in/around json-chart blocks to avoid modifying other markdown.
-        if "json-chart" in text:
-            lines = text.splitlines()
-            out_lines: list[str] = []
-            in_chart = False
-            i = 0
-            while i < len(lines):
-                line = lines[i]
-                stripped = line.strip()
-
-                if not in_chart:
-                    # Opening fence variants
-                    if stripped in ("```json-chart", "``json-chart", "``` json-chart", "`` json-chart"):
-                        out_lines.append("```json-chart")
-                        in_chart = True
-                        i += 1
-                        continue
-
-                    # Variant: opening fence on its own line, language on next line.
-                    #   ```
-                    #   json-chart
-                    #   { ... }
-                    if stripped in ("```", "``") and i + 1 < len(lines) and lines[i + 1].strip() == "json-chart":
-                        out_lines.append("```json-chart")
-                        in_chart = True
-                        i += 2
-                        continue
-
-                    # Variant: opening fence appears at end of a content line.
-                    #   ...：   ```
-                    #   json-chart
-                    if stripped.endswith("```") and not stripped.startswith("```"):
-                        if i + 1 < len(lines) and lines[i + 1].strip() == "json-chart":
-                            prefix = line[: line.rfind("```")].rstrip()
-                            if prefix:
-                                out_lines.append(prefix)
-                            out_lines.append("```json-chart")
-                            in_chart = True
-                            i += 2
-                            continue
-
-                else:
-                    # Closing fence variants
-                    if stripped in ("```", "``"):
-                        out_lines.append("```")
-                        in_chart = False
-                        i += 1
-                        continue
-
-                    # Variant: closing fence appears on the same line after JSON.
-                    #   { ... } ```
-                    if "```" in line:
-                        pos = line.find("```")
-                        before = line[:pos].rstrip()
-                        after = line[pos + 3 :].strip()
-                        if before:
-                            out_lines.append(before)
-                        out_lines.append("```")
-                        in_chart = False
-                        if after:
-                            out_lines.append(after)
-                        i += 1
-                        continue
-
-                out_lines.append(line)
-                i += 1
-
-            text = "\n".join(out_lines)
-
-        def find_json_end(s: str, start_idx: int) -> Optional[int]:
-            # find first '{'
-            i = s.find('{', start_idx)
-            if i == -1:
-                return None
-            depth = 0
-            in_str = False
-            escape = False
-            quote = '"'
-            for j in range(i, len(s)):
-                ch = s[j]
-                if in_str:
-                    if escape:
-                        escape = False
-                        continue
-                    if ch == '\\':
-                        escape = True
-                        continue
-                    if ch == quote:
-                        in_str = False
-                    continue
-
-                if ch == '"' or ch == "'":
-                    in_str = True
-                    quote = ch
-                    continue
-                if ch == '{':
-                    depth += 1
-                elif ch == '}':
-                    depth -= 1
-                    if depth == 0:
-                        return j
-            return None
-
-        # Phase 1: Repair missing closing fences for properly-opened blocks.
-        if "```json-chart" not in text:
-            return text
-
-        out = []
-        i = 0
-        needle = "```json-chart"
-        while True:
-            idx = text.find(needle, i)
-            if idx == -1:
-                out.append(text[i:])
-                break
-
-            # append preceding text
-            out.append(text[i:idx])
-
-            # keep the opening fence line
-            fence_line_end = text.find("\n", idx)
-            if fence_line_end == -1:
-                out.append(text[idx:])
-                break
-            fence_line_end += 1
-            out.append(text[idx:fence_line_end])
-
-            # attempt to find end of JSON object
-            json_end = find_json_end(text, fence_line_end)
-            if json_end is None:
-                # cannot repair; keep rest and stop
-                out.append(text[fence_line_end:])
-                break
-
-            # include JSON object (up to closing brace)
-            out.append(text[fence_line_end:json_end + 1])
-
-            # check if there's already a closing fence soon after
-            after_json = text[json_end + 1:]
-            closing_idx = after_json.find("```")
-            opening_idx2 = after_json.find(needle)
-
-            if closing_idx != -1 and (opening_idx2 == -1 or closing_idx < opening_idx2):
-                # existing closing fence; keep everything up to it as-is
-                out.append(after_json[:closing_idx + 3])
-                i = json_end + 1 + closing_idx + 3
-                continue
-
-            # missing closing fence: insert one
-            out.append("\n```\n")
-            i = json_end + 1
-
-        return "".join(out)
+        return sanitize_json_chart_blocks(text)
 
     def _cluster_signals(self, signals: List[Dict[str, Any]], user_query: str = None) -> List[Dict[str, Any]]:
         """
@@ -709,77 +553,16 @@ class ReportAgent:
 
     @staticmethod
     def build_structured_report(report_md: str, signals: List[Dict[str, Any]], clusters: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """构建结构化研报输出（便于前端渲染）"""
-        text = (report_md or "").strip()
-        lines = text.splitlines() if text else []
+        """构建结构化研报输出（便于前端渲染）
 
-        # 标题
-        title = "研报"
-        for line in lines:
-            if line.startswith("# "):
-                title = line.replace("# ", "").strip()
-                break
-
-        # 章节解析
-        sections: List[Dict[str, Any]] = []
-        current: Dict[str, Any] | None = None
-        for line in lines:
-            heading = re.match(r"^(#{2,4})\s+(.*)$", line.strip())
-            if heading:
-                if current:
-                    sections.append(current)
-                current = {"title": heading.group(2).strip(), "content": []}
-                continue
-            if current is None:
-                current = {"title": "摘要", "content": []}
-            current["content"].append(line)
-        if current:
-            sections.append(current)
-
-        # 摘要要点
-        bullets = [
-            re.sub(r"^[-*•]\s+", "", text.strip())
-            for text in lines
-            if text.strip().startswith(("- ", "* ", "• "))
-        ]
-        bullets = [b for b in bullets if b]
-
-        # 信号映射
-        signal_map = {}
-        for i, s in enumerate(signals, 1):
-            title_s = s.title if hasattr(s, "title") else s.get("title", "")
-            signal_map[i] = {
-                "id": i,
-                "title": title_s,
-                "summary": getattr(s, "summary", "") if not isinstance(s, dict) else s.get("summary", ""),
-                "sentiment_score": getattr(s, "sentiment_score", None) if not isinstance(s, dict) else s.get("sentiment_score"),
-                "confidence": getattr(s, "confidence", None) if not isinstance(s, dict) else s.get("confidence"),
-                "intensity": getattr(s, "intensity", None) if not isinstance(s, dict) else s.get("intensity"),
-                "impact_tickers": getattr(s, "impact_tickers", []) if not isinstance(s, dict) else s.get("impact_tickers", []),
-                "expected_horizon": getattr(s, "expected_horizon", "") if not isinstance(s, dict) else s.get("expected_horizon", "")
-            }
-
-        # 聚类
-        structured_clusters = []
-        for c in clusters or []:
-            ids = c.get("signal_ids", []) or []
-            structured_clusters.append({
-                "title": c.get("theme_title", ""),
-                "rationale": c.get("rationale", ""),
-                "signal_ids": ids,
-                "signals": [signal_map.get(i) for i in ids if i in signal_map]
-            })
-
-        return {
-            "title": title,
-            "summary_bullets": bullets[:8],
-            "sections": [
-                {"title": s["title"], "content": "\n".join(s["content"]).strip()}
-                for s in sections
-            ],
-            "clusters": structured_clusters,
-            "signals": list(signal_map.values())
-        }
+        Delegates to `deepear.src.agents.report.structured_report.build_structured_report`
+        (extract-report-agent-pure-chart-and-structured-report-functions). The
+        original method touched no instance/class state, so this is a pure
+        pass-through -- kept as a real staticmethod (not a bare attribute
+        alias) so existing/future monkeypatches of the name keep intercepting
+        the internal `self.build_structured_report(...)` call site.
+        """
+        return _build_structured_report_impl(report_md, signals, clusters)
 
     def generate_report(self, signals: List[Dict[str, Any]], user_query: str = None) -> str:
         """
