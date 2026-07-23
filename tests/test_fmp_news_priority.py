@@ -204,3 +204,59 @@ def test_fmp_news_records_future_only_zero_reason(monkeypatch):
     assert diagnostics[-1]["date_filtered_count"] == 0
     assert diagnostics[-1]["zero_reason"] == "future_only"
     clear_news_diagnostics()
+
+
+def test_fmp_stock_news_passes_date_range_for_backdated_trading_date(monkeypatch):
+    """Backdated trading dates must constrain the stock-news request window.
+
+    Without from/to the endpoint returns only the latest articles, so a
+    backtest replay over past dates has every row filtered out by
+    _within_trading_date and the news channel silently degrades to
+    "no news" (observed on the 2026-04 US 3M rerun).
+    """
+    api = _build_api(monkeypatch)
+    captured = {}
+
+    def fake_request_json(path, params=None):
+        if path == "/stable/news/stock":
+            captured.update(params or {})
+            return [
+                {
+                    "symbol": "MSFT",
+                    "publishedDate": "2026-04-27 08:00:00",
+                    "publisher": "StockProvider",
+                    "title": "MSFT backdated item",
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(api, "_request_json", fake_request_json)
+    results = api.get_news(ticker="MSFT", trading_date=datetime(2026, 4, 28), limit=5)
+
+    assert captured["from"] == "2026-04-21"
+    assert captured["to"] == "2026-04-28"
+    assert len(results) == 1 and results[0].title == "MSFT backdated item"
+
+
+def test_fmp_stock_news_omits_date_range_for_live_calls(monkeypatch):
+    """trading_date=None (live mode) must keep the original request shape."""
+    api = _build_api(monkeypatch)
+    captured = {}
+
+    def fake_request_json(path, params=None):
+        if path == "/stable/news/stock":
+            captured.update(params or {})
+            return [
+                {
+                    "symbol": "MSFT",
+                    "publishedDate": "2026-04-27 08:00:00",
+                    "publisher": "StockProvider",
+                    "title": "MSFT live item",
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(api, "_request_json", fake_request_json)
+    api.get_news(ticker="MSFT", trading_date=None, limit=5)
+
+    assert "from" not in captured and "to" not in captured

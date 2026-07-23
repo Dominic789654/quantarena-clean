@@ -9,7 +9,7 @@ import json
 import hashlib
 import re
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -87,16 +87,25 @@ class TavilyNewsAPI:
         if self.snapshot_mode == "local_only":
             raise FileNotFoundError(f"Tavily news snapshot not found for key={cache_key}")
 
-        response = self._request_with_retry(
-            payload={
-                "api_key": self.api_key,
-                "query": query,
-                "search_depth": "basic",
-                "max_results": max_results,
-                "include_raw_content": False,
-                "include_images": False,
-            }
-        )
+        payload = {
+            "api_key": self.api_key,
+            "query": query,
+            "search_depth": "basic",
+            "max_results": max_results,
+            "include_raw_content": False,
+            "include_images": False,
+        }
+        backdated = bool(trading_date and trading_date.date() < datetime.utcnow().date())
+        if backdated:
+            # Backtest replay of a past trading date: without a date range
+            # Tavily searches the current web, so results are drawn from
+            # "now" rather than the trading date. Constrain the search to
+            # the week up to the trading date; live calls keep the
+            # original request shape.
+            payload["topic"] = "news"
+            payload["start_date"] = (trading_date - timedelta(days=7)).strftime("%Y-%m-%d")
+            payload["end_date"] = trading_date.strftime("%Y-%m-%d")
+        response = self._request_with_retry(payload=payload)
         response.raise_for_status()
         payload = response.json()
 
@@ -107,6 +116,15 @@ class TavilyNewsAPI:
         for item in results:
             publish_time = self._extract_publish_time(item, trading_date)
             publish_dt = self._parse_datetime(publish_time)
+
+            # In backdated replay an item WITHOUT a parseable publish time
+            # must be dropped, not stamped with the trading date: the
+            # search still runs against today's index, so an undated item
+            # may be current-web content that would leak forward-looking
+            # information into the replayed day. Live mode keeps the
+            # stamp-with-trading-date fallback for stability.
+            if backdated and not self._has_explicit_publish_time(item):
+                continue
 
             # Avoid accidental forward-looking data in backtest mode.
             if cutoff and publish_dt:
@@ -306,6 +324,14 @@ class TavilyNewsAPI:
         if market.lower() == "cn":
             return f"{ticker} A-share company news 财经 新闻"
         return f"{ticker} stock company news earnings guidance"
+
+    @staticmethod
+    def _has_explicit_publish_time(item: Dict[str, Any]) -> bool:
+        """True when the raw result carries its own publish timestamp."""
+        return any(
+            isinstance(item.get(field), str) and item.get(field).strip()
+            for field in ("published_date", "published_time", "publish_time", "date")
+        )
 
     @staticmethod
     def _extract_publish_time(item: Dict[str, Any], trading_date: Optional[datetime]) -> str:
