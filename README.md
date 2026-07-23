@@ -228,6 +228,7 @@ where to add new mandates or providers.
 | Document | Contents |
 | --- | --- |
 | [INSTALL.md](docs/INSTALL.md) | Detailed installation notes |
+| [CLI.md](docs/CLI.md) | Full `quantarena` CLI reference (evaluate, artifact, report, provider, cache, live, paper) |
 | [API.md](docs/API.md) | Data providers and API notes |
 | [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Branch, PR, test, review, and API-smoke workflow |
 | [reproduction.md](docs/reproduction.md) | Artifact validation and reproduction checks |
