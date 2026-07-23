@@ -464,7 +464,6 @@ def generate_markdown_report(
         "\n---\n\n",
         "## 共享数据缓存统计\n",
         f"- K-line 数据获取时间: {shared_stats.get('kline_fetch_time', 0):.2f}s\n",
-        f"- DeepEar 数据获取时间: {shared_stats.get('deepear_fetch_time', 0):.2f}s\n",
         f"- 数据缓存总时间: {shared_stats.get('total_time', 0):.2f}s\n",
         f"- shared phase1 artifact cache 命中: {shared_stats.get('shared_phase1_artifact_cache_hits', 0)}\n",
         f"- shared phase1 artifact cache 未命中: {shared_stats.get('shared_phase1_artifact_cache_misses', 0)}\n",

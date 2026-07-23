@@ -6,6 +6,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from quantarena.cache_health import (
     FixedBacktestCacheHealthConfig,
     run_fixed_backtest_cache_health,
@@ -112,6 +114,46 @@ def _write_ready_cache_config(tmp_path: Path) -> FixedBacktestCacheHealthConfig:
         shared_phase1_cache_dir=tmp_path / "missing_phase1",
         shared_analyst_cache_dir=tmp_path / "missing_analyst",
     )
+
+
+def test_stock_price_layer_reads_wal_db_on_readonly_dir(tmp_path):
+    """A WAL-mode signal_flux.db on a read-only mount must still report hits.
+
+    WAL readers need write access to the -shm sidecar even under mode=ro;
+    the immutable=1 fallback keeps prebaked read-only caches readable."""
+    import os
+    import sqlite3 as _sqlite3
+
+    if os.geteuid() == 0:
+        pytest.skip("directory write-permission bits do not bind for root")
+
+    db_path = tmp_path / "signal_flux.db"
+    conn = _sqlite3.connect(db_path)
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute(
+        "CREATE TABLE stock_prices (ticker TEXT, date TEXT, close REAL)"
+    )
+    conn.execute(
+        "INSERT INTO stock_prices VALUES ('AAA', '2026-01-05', 10.0)"
+    )
+    conn.commit()
+    # Checkpoint so the row lives in the main file, then drop sidecars the
+    # way a prebaked-artifact copy would.
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+
+    os.chmod(tmp_path, 0o555)
+    try:
+        from quantarena.cache_health import _open_readonly_connection, _stock_price_dates
+
+        connection = _open_readonly_connection(str(db_path))
+        try:
+            dates = _stock_price_dates(connection, "AAA", "2026-01-01", "2026-01-31")
+        finally:
+            connection.close()
+        assert dates == {"2026-01-05"}
+    finally:
+        os.chmod(tmp_path, 0o755)
 
 
 def _write_stock_price_db(path: Path) -> None:
