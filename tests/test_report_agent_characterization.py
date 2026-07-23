@@ -108,8 +108,12 @@ class TestConstruction:
     def test_tool_model_defaults_to_model_when_omitted(self, monkeypatch):
         model = FakeModel()
         router = ScriptedAgentRouter()
+        # Patched on `deepear.src.agents.report.agent` -- ReportAgent's real
+        # home since `finalize-report-agent-package-and-shim` -- not on the
+        # `report_agent` shim, whose re-export of `Agent` (if it had one)
+        # would not affect the name the class body actually reads.
         monkeypatch.setattr(
-            "deepear.src.agents.report_agent.Agent",
+            "deepear.src.agents.report.agent.Agent",
             make_scripted_agent_class(router),
         )
         agent = ReportAgent(FakeDatabaseManager(), model, incremental_edit=True)
