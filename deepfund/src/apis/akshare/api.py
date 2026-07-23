@@ -89,6 +89,7 @@ class AKShareNewsAPI:
         self.max_retries = self._get_int_env("AKSHARE_MAX_RETRIES", 1, min_value=0, max_value=5)
         self.retry_backoff_seconds = self._get_float_env("AKSHARE_RETRY_BACKOFF_SECONDS", 0.3, min_value=0.0)
         self.lookback_days = self._get_int_env("AKSHARE_NEWS_LOOKBACK_DAYS", 5, min_value=1, max_value=30)
+        self.cninfo_disclosure_enabled = self._get_bool_env("AKSHARE_CNINFO_DISCLOSURE_ENABLED", True)
         self.notice_enabled = self._get_bool_env("AKSHARE_NOTICE_ENABLED", True)
         self.notice_symbol = os.getenv("AKSHARE_NOTICE_SYMBOL", "全部").strip() or "全部"
         self.notice_high_signal_only = self._get_bool_env("AKSHARE_NOTICE_HIGH_SIGNAL_ONLY", True)
@@ -162,6 +163,30 @@ class AKShareNewsAPI:
             )
 
         source = "network:akshare"
+        if (
+            not items
+            and trading_date is not None
+            and self.cninfo_disclosure_enabled
+            and self._is_backdated(trading_date)
+        ):
+            # Backdated replay: stock_news_em only serves the latest ~10
+            # items per ticker (evaluated 2026-07: 0/20 universe tickers
+            # reachable at a 3-month-old date), so a replayed past window
+            # otherwise degrades to an empty news channel. cninfo
+            # disclosures are queryable per ticker with an explicit
+            # historical date range, so use them as the replay-mode
+            # company-news source; live mode is unaffected.
+            cninfo_items = self._get_cninfo_disclosure_items(
+                symbol=symbol,
+                lower_bound=lower_bound,
+                cutoff=cutoff,
+                max_results=max_results,
+                dedup=dedup,
+            )
+            items.extend(cninfo_items)
+            if cninfo_items:
+                source = "network:akshare_cninfo"
+
         if not items and trading_date is not None and self.notice_enabled:
             notice_items = self._get_notice_items(
                 symbol=symbol,
@@ -238,6 +263,91 @@ class AKShareNewsAPI:
             )
             if len(items) >= max_results:
                 return
+
+    @staticmethod
+    def _is_backdated(trading_date: datetime) -> bool:
+        """True when the trading date is strictly before today (UTC)."""
+        return trading_date.date() < datetime.utcnow().date()
+
+    def _get_cninfo_disclosure_items(
+        self,
+        symbol: str,
+        lower_bound: Optional[datetime],
+        cutoff: Optional[datetime],
+        max_results: int,
+        dedup: Set[Tuple[str, str]],
+    ) -> List[MediaNews]:
+        """Fetch per-ticker cninfo disclosures for [lower_bound, cutoff]."""
+        if cutoff is None:
+            return []
+        if lower_bound is None:
+            lower_bound = cutoff - timedelta(days=self.lookback_days - 1)
+
+        try:
+            df = self._request_cninfo_with_retry(
+                symbol=symbol,
+                start_key=lower_bound.strftime("%Y%m%d"),
+                end_key=cutoff.strftime("%Y%m%d"),
+            )
+        except Exception:
+            return []
+        if df is None or df.empty:
+            return []
+
+        title_col = "公告标题" if "公告标题" in df.columns else "title"
+        date_col = "公告时间" if "公告时间" in df.columns else "date"
+        link_col = "公告链接" if "公告链接" in df.columns else "url"
+        name_col = "简称" if "简称" in df.columns else "name"
+
+        collected: List[MediaNews] = []
+        for _, row in df.iterrows():
+            title = str(row.get(title_col, "")).strip()
+            if not title:
+                continue
+
+            publish_time = self._normalize_publish_time(row.get(date_col), trading_date=None)
+            publish_dt = self._parse_datetime(publish_time)
+            if publish_dt is None:
+                continue
+            publish_dt_cn = self._to_cn_tz(publish_dt)
+            if publish_dt_cn > cutoff or publish_dt_cn < lower_bound:
+                continue
+
+            link = str(row.get(link_col, "")).strip()
+            link = link if link.startswith(("http://", "https://")) else None
+            if not self._register_dedup(dedup=dedup, title=title, link=link):
+                continue
+
+            name = str(row.get(name_col, "")).strip()
+            collected.append(
+                MediaNews(
+                    title=title,
+                    publish_time=publish_time,
+                    publisher="巨潮资讯公告",
+                    link=link,
+                    summary=f"公司: {name}" if name else None,
+                )
+            )
+            if len(collected) >= max_results:
+                break
+        return collected
+
+    def _request_cninfo_with_retry(self, symbol: str, start_key: str, end_key: str):
+        attempt = 0
+        while True:
+            try:
+                self._prepare_pandas_string_backend()
+                return ak.stock_zh_a_disclosure_report_cninfo(
+                    symbol=symbol,
+                    market="沪深京",
+                    start_date=start_key,
+                    end_date=end_key,
+                )
+            except Exception:
+                if attempt >= self.max_retries:
+                    raise
+                self._sleep_before_retry(attempt)
+                attempt += 1
 
     def _get_notice_items(
         self,
