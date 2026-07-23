@@ -191,7 +191,7 @@ def _check_stock_price_cache(
         )
 
     try:
-        connection = sqlite3.connect(f"file:{config.db_path}?mode=ro", uri=True)
+        connection = _open_readonly_connection(str(config.db_path))
     except sqlite3.Error as exc:
         return CacheHealthLayer(
             name="stock_price_db",
@@ -223,6 +223,25 @@ def _check_stock_price_cache(
         path=str(config.db_path),
         details=details,
     )
+
+
+def _open_readonly_connection(db_path: str) -> sqlite3.Connection:
+    """Open a database strictly read-only, tolerating WAL on read-only media.
+
+    A WAL-mode database needs write access to its -shm sidecar even for
+    mode=ro readers, so on a read-only mount the first query fails with
+    'attempt to write a readonly database'. Falling back to immutable=1 is
+    safe there: a read-only directory cannot host a concurrent writer.
+    """
+    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        connection.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchall()
+        return connection
+    except sqlite3.OperationalError:
+        connection.close()
+    connection = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+    connection.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchall()
+    return connection
 
 
 def _stock_price_dates(

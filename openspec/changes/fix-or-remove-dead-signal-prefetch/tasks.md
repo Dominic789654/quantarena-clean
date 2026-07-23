@@ -4,4 +4,4 @@
 
 ## 2. Verification
 
-- [ ] 2.1 Full suite green (multi-personality tests unchanged); ruff clean.
+- [x] 2.1 Full suite green (multi-personality tests unchanged); ruff clean.
