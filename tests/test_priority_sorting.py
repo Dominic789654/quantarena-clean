@@ -23,80 +23,12 @@ class MockAnalystSignal:
         return str(self.signal)
 
 
-# Extract and test priority calculation logic directly
-def calculate_priority_score(analyst_signals):
-    """
-    Calculate priority score for smart sorting.
-    Extracted from workflow_adapter for testing.
-    """
-    if not analyst_signals:
-        return 0.0
-
-    SIGNAL_SCORE = {
-        "BULLISH": 3.0,
-        "NEUTRAL": 2.0,
-        "BEARISH": 1.0
-    }
-
-    scores = []
-    signal_values = []
-
-    for signal in analyst_signals:
-        sig_str = str(getattr(signal, 'signal', 'NEUTRAL'))
-        confidence = getattr(signal, 'confidence', 0.5)
-
-        base_score = SIGNAL_SCORE.get(sig_str, 2.0)
-        weighted_score = base_score * confidence
-        scores.append(weighted_score)
-        signal_values.append(SIGNAL_SCORE.get(sig_str, 2.0))
-
-    avg_score = sum(scores) / len(scores) if scores else 0.0
-
-    if len(signal_values) > 1:
-        import numpy as np
-        std_dev = np.std(signal_values)
-        consistency = 1.0 - (std_dev / 2.0)
-    else:
-        consistency = 1.0
-
-    bullish_count = sum(1 for s in analyst_signals if str(getattr(s, 'signal', 'NEUTRAL')) == "BULLISH")
-    bullish_ratio = bullish_count / len(analyst_signals)
-    bullish_bonus = 0.5 if bullish_ratio >= 0.7 else 0.0
-
-    bearish_count = sum(1 for s in analyst_signals if str(getattr(s, 'signal', 'NEUTRAL')) == "BEARISH")
-    bearish_ratio = bearish_count / len(analyst_signals)
-    bearish_penalty = -0.3 if bearish_ratio >= 0.7 else 0.0
-
-    final_score = avg_score * consistency + bullish_bonus + bearish_penalty
-
-    return round(final_score, 3)
-
-
-def get_smart_priority_order(signals, original_tickers):
-    """
-    Determine smart priority order based on collected signals.
-    """
-    if not signals:
-        return original_tickers.copy()
-
-    ticker_data = []
-    for ticker, data in signals.items():
-        summary = data.get("summary", {})
-        ticker_data.append((
-            ticker,
-            data.get("priority_score", 0.0),
-            summary.get("bullish_count", 0),
-            summary.get("signal_consistency", 0.0),
-            summary.get("avg_confidence", 0.0)
-        ))
-
-    sorted_data = sorted(
-        ticker_data,
-        key=lambda x: (x[1], x[2], x[3], x[4]),
-        reverse=True
-    )
-
-    return [item[0] for item in sorted_data]
+# Test the real production code (backtest/workflow/scoring.py) rather than
+# a hand-copied duplicate — see extract-workflow-scoring-functions.
+from backtest.workflow.scoring import (
+    _calculate_priority_score as calculate_priority_score,
+    _get_smart_priority_order as get_smart_priority_order,
+)
 
 
 class TestPriorityScoreCalculation:
