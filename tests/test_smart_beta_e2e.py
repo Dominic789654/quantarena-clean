@@ -24,7 +24,7 @@ tk_path = os.path.expanduser("~/tk.csv")
 if os.path.exists(tk_path):
     try:
         os.remove(tk_path)
-    except:
+    except Exception:
         pass
 
 print("=" * 70)
@@ -129,7 +129,7 @@ for i, ticker in enumerate(tickers):
 
 # Print factor summary
 print(f"\n✅ Factor calculation complete for {n_stocks} stocks")
-print(f"\n📊 Factor Summary (first 5):")
+print("\n📊 Factor Summary (first 5):")
 for ticker in tickers[:5]:
     fd = factor_data_dict[ticker]
     print(f"   {ticker}: Dimson={fd.dimson_beta:.4f}, Downside={fd.downside_beta:.4f}, "
@@ -173,13 +173,13 @@ opt_result = optimizer.optimize(
     factor_data=factor_data_dict
 )
 
-print(f"\n✅ Optimization complete:")
+print("\n✅ Optimization complete:")
 print(f"   Success: {opt_result.success}")
 print(f"   Message: {opt_result.message}")
 print(f"   Tracking Error: {opt_result.tracking_error:.6f}")
 
 if opt_result.weights:
-    print(f"\n📊 Optimized Portfolio (Top 10):")
+    print("\n📊 Optimized Portfolio (Top 10):")
     sorted_weights = sorted(opt_result.weights.items(), key=lambda x: x[1], reverse=True)[:10]
     for ticker, weight in sorted_weights:
         bench_w = benchmark_weights.get(ticker, 0)
@@ -262,13 +262,13 @@ portfolio_pct = pd.Series(portfolio_returns * 100)
 
 metrics = PerformanceMetrics.calculate_smart_beta_metrics(portfolio_pct, benchmark_pct)
 
-print(f"\n📊 Simulated Portfolio (120 days):")
+print("\n📊 Simulated Portfolio (120 days):")
 port_cum = (1 + portfolio_returns).prod() - 1
 bench_cum = (1 + benchmark_returns).prod() - 1
 print(f"   Portfolio Return: {port_cum*100:.2f}%")
 print(f"   Benchmark Return: {bench_cum*100:.2f}%")
 
-print(f"\n🎯 Smart Beta Metrics:")
+print("\n🎯 Smart Beta Metrics:")
 print(f"   Tracking Error:  {metrics['tracking_error']:>8.2f}%")
 print(f"   Information Ratio: {metrics['information_ratio']:>8.2f}")
 print(f"   Alpha:            {metrics['alpha']:>8.2f}%")

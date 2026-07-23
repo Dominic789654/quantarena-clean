@@ -56,7 +56,8 @@ def plot_kline_matplotlib(ax, ax_vol, dates, df, label_suffix="", color_up='#ef4
         # Body
         rect_bottom = min(opens[i], closes[i])
         rect_height = abs(opens[i] - closes[i])
-        if rect_height == 0: rect_height = 0.001 # Visual hair
+        if rect_height == 0:
+            rect_height = 0.001 # Visual hair
         
         ax.add_patch(plt.Rectangle((x[i] - width/2, rect_bottom), width, rect_height, 
                                  edgecolor=color, facecolor=color if not is_prediction else 'none', 
@@ -80,7 +81,7 @@ def render_comparison_chart(history_df, actual_df, pred_df, title):
     ax_vol = fig.add_subplot(gs[1], sharex=ax_main)
     
     # 1. Plot History
-    hist_indices = [date_to_idx[d] for d in history_df['date']]
+    [date_to_idx[d] for d in history_df['date']]
     # We use a custom x for plotting to ensure continuity
     plot_kline_matplotlib(ax_main, ax_vol, history_df['date'], history_df, alpha=0.8)
     
@@ -139,7 +140,8 @@ def run_backtest(df, predictor, lookback, pred_len, start_index=0):
     pred_start = history_end
     
     available_pred_len = total_len - pred_start
-    if available_pred_len <= 0: return
+    if available_pred_len <= 0:
+        return
     actual_pred_len = min(pred_len, available_pred_len)
     pred_end = pred_start + actual_pred_len
     
@@ -160,7 +162,8 @@ def run_backtest(df, predictor, lookback, pred_len, start_index=0):
     render_comparison_chart(x_df, y_true_df, pred_df, f"Backtest: {TICKER} K-Line Comparison")
 
 def run_forecast(df, predictor, lookback, pred_len):
-    if len(df) < lookback: return
+    if len(df) < lookback:
+        return
     x_df = df.iloc[-lookback:].copy()
     last_date = x_df['date'].iloc[-1]
     future_dates = pd.date_range(start=last_date + BusinessDay(1), periods=pred_len, freq='B')

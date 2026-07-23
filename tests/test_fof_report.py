@@ -727,7 +727,6 @@ def test_compute_mcr_summary_ignores_sparse_missing_histories():
         )
 
 def test_generate_fof_allocations_json_is_strict_json(tmp_path):
-    from io import StringIO
     from types import SimpleNamespace
     import json
 

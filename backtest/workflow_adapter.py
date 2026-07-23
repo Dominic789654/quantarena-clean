@@ -6,14 +6,13 @@ Adapter to integrate DeepFund's AgentWorkflow into the backtest framework.
 Provides simplified interface for sequential day-by-day trading simulation.
 """
 
-import sys
 import os
 import uuid
 import json
 import sqlite3
 import hashlib
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 from datetime import UTC, datetime
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -827,7 +826,7 @@ class BacktestWorkflowAdapter:
         decisions = {}
 
         try:
-            from graph.schema import FundState, Portfolio, Position
+            from graph.schema import FundState, Portfolio, Position  # noqa: F401 — availability probe
             from graph.constants import AgentKey
             from agents.registry import AgentRegistry
             from util.db_helper import db_initialize, get_db
@@ -1586,7 +1585,7 @@ class BacktestWorkflowAdapter:
             consistency = 1.0 - min(cv, 1.0)  # Convert to 0-1 scale
 
             return round(consistency, 3)
-        except:
+        except Exception:
             return 0.5  # Default if calculation fails
 
     @staticmethod

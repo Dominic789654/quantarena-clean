@@ -57,7 +57,7 @@ def test_markdown_report_includes_behavior_metrics_section(tmp_path: Path):
 
 
 def test_multi_personality_behavior_metrics_table_and_csv_include_behavior_fields(tmp_path: Path):
-    tracker = PortfolioTracker(initial_cash=100000.0)
+    PortfolioTracker(initial_cash=100000.0)
     dummy_result = SimpleNamespace(run_id="backtest-demo", metrics={
         "avg_turnover_ratio": 0.12,
         "avg_cash_ratio": 0.33,

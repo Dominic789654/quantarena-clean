@@ -7,7 +7,6 @@ Generates reports, charts, and CSV exports for backtest results.
 
 import json
 import math
-import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 from datetime import datetime

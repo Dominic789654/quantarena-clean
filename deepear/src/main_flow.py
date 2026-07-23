@@ -1,6 +1,4 @@
 import os
-import json
-import re
 from typing import List, Dict, Optional, Union, Any
 from loguru import logger
 from dotenv import load_dotenv
@@ -8,7 +6,6 @@ from shared.utils.time_utils import now_utc
 from shared.utils.run_id import generate_run_id
 
 from deepear.src.utils.database_manager import DatabaseManager
-from deepear.src.utils.llm.factory import get_model
 from deepear.src.utils.llm.router import router
 from deepear.src.utils.search_tools import SearchTools
 from deepear.src.utils.json_utils import extract_json
@@ -451,7 +448,7 @@ class SignalFluxWorkflow:
                 except Exception as e:
                     logger.error(f"⚠️ Critical error in concurrency mode: {e}. Falling back to sequential (1 worker).")
                     # Fallback Logic: Filter out already analyzed signals and process the rest sequentially
-                    analyzed_ids = set(s.get("signal_id") for s in analyzed_signals) # Note: signal_id might be generated, relying on uniqueness might be tricky.
+                    set(s.get("signal_id") for s in analyzed_signals) # Note: signal_id might be generated, relying on uniqueness might be tricky.
                     # Better: usage `high_value_signals` index or ID.
                     
                     logger.info("🔄 Fallback: Switching to sequential processing...")
@@ -753,7 +750,6 @@ class SignalFluxWorkflow:
         return new_run_id
 
 if __name__ == "__main__":
-    import sys
     import argparse
     
     parser = argparse.ArgumentParser(description="DeepEar Workflow - Investment Signal Analysis")

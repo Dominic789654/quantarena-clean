@@ -196,10 +196,14 @@ class VisualizerTools:
         )
         
         # Overlap all series
-        if pred_line: kline.overlap(pred_line)
-        if base_kline: kline.overlap(base_kline)
-        if adj_kline: kline.overlap(adj_kline)
-        if gt_line: kline.overlap(gt_line)
+        if pred_line:
+            kline.overlap(pred_line)
+        if base_kline:
+            kline.overlap(base_kline)
+        if adj_kline:
+            kline.overlap(adj_kline)
+        if gt_line:
+            kline.overlap(gt_line)
 
         # 4. 成交量柱状图
         # 同理扩展成交量数据
@@ -349,7 +353,8 @@ class VisualizerTools:
         for i, item in enumerate(nodes_data):
             # 节点样式
             color = "#ef4444" if "利空" in item.get("impact_type", "") else "#22c55e"
-            if "中性" in item.get("impact_type", ""): color = "#6b7280"
+            if "中性" in item.get("impact_type", ""):
+                color = "#6b7280"
             
             original_name = item.get("node_name", f"节点{i}")
             wrapped_name = wrap_text(original_name)

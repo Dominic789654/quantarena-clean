@@ -27,13 +27,11 @@ jobs:
       - name: Install package with dev dependencies
         run: pip install -e ".[dev]"
 
-      - name: Lint (fatal rules gate)
-        # Syntax errors, undefined names, and comparison bugs fail the build.
-        # The full ruleset still has legacy findings; it runs report-only below.
-        run: ruff check . --select E9,F63,F7,F82
-
-      - name: Lint (full report, informational)
-        run: ruff check . --exit-zero --statistics
+      - name: Lint
+        # Full default ruleset; the legacy debt was cleared in one pass and
+        # config-level exemptions (E402, kronos star-imports) live in
+        # pyproject.toml with rationale.
+        run: ruff check .
 
       - name: Repository smoke check
         run: python -m quantarena.cli smoke --json

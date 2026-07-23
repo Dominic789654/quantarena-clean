@@ -10,7 +10,6 @@ from deepear.src.prompts.trend_agent import (
     get_trend_scanner_instructions,
     get_trend_evaluator_instructions,
     get_trend_scan_task,
-    format_scan_context,
     get_trend_eval_task
 )
 from deepear.src.schema.models import ScanContext
@@ -96,7 +95,7 @@ class TrendAgent:
         logger.debug(f"Scanner output length: {len(scan_raw_content)} chars")
         
         # 尝试解析为 ScanContext 以提取结构化数据
-        scan_data = extract_json(scan_raw_content)
+        extract_json(scan_raw_content)
         # 使用完整的扫描输出（包含所有工具调用结果），而不是格式化版本
         raw_data_str = scan_raw_content if scan_raw_content else "无法获取扫描数据"
         

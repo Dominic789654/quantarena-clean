@@ -6,11 +6,9 @@ properly close their database connections.
 """
 
 import sys
-import os
 import sqlite3
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 # Add project paths
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -52,7 +50,7 @@ class TestDatabaseManagerConnectionCleanup:
             with DatabaseManager(str(db_path)) as db:
                 # Connection should be active inside context
                 assert db._conn is not None
-                conn_id = id(db._conn)
+                id(db._conn)
             
             # Connection should be closed after exiting context
             assert db._conn is None

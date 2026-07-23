@@ -17,7 +17,6 @@ from backtest.fof_allocator import FOFAllocator, FOFAllocationResult, SleeveSnap
 from backtest.mandate_interface import allocate_with_mandate
 
 if TYPE_CHECKING:
-    from backtest.portfolio_allocator import Portfolio as AllocatorPortfolio
     from backtest.portfolio_allocator import PortfolioAllocator
 
 

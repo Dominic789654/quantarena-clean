@@ -166,9 +166,11 @@ def extract_json(text: str) -> Optional[Any]:
                 # 寻找匹配的 { }
                 stack = []
                 for i, char in enumerate(potential_json):
-                    if char == '{': stack.append('{')
+                    if char == '{':
+                        stack.append('{')
                     elif char == '}':
-                        if stack: stack.pop()
+                        if stack:
+                            stack.pop()
                         if not stack:
                             content = potential_json[:i+1]
                             return ast.literal_eval(content)

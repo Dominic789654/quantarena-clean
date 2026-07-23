@@ -10,15 +10,13 @@ Multi-Personality Parallel Backtest Engine
 - 详细对比报告: 收益率、风险指标、交易行为等多维度对比
 """
 
-import sys
-import os
 import json
 import time
 import traceback
 from copy import deepcopy
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Callable, Tuple
-from dataclasses import dataclass, field, asdict
+from typing import List, Dict, Any, Optional, Tuple
+from dataclasses import dataclass, field
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import multiprocessing as mp
 from loguru import logger
@@ -171,7 +169,7 @@ class SharedDataCache:
         """预取所有股票的 K-line 数据"""
         logger.info(f"Prefetching K-line data for {len(self.tickers)} tickers...")
 
-        results = self.prefetcher.prefetch_klines(
+        self.prefetcher.prefetch_klines(
             tickers=self.tickers,
             start_date=self.start_date,
             end_date=self.end_date,
@@ -205,7 +203,6 @@ class SharedDataCache:
 
         try:
             # 导入 DeepEar 相关模块
-            from deepear.src.main_flow import SignalFluxWorkflow
             from deepear.src.utils.database_manager import DatabaseManager
 
             db_manager = DatabaseManager(db_path=self.db_path)
@@ -1227,7 +1224,7 @@ class MultiPersonalityBacktest(BaseBacktestEngine):
                 total_tokens = input_tokens + output_tokens
                 cost = (input_tokens / 1_000_000 * 1) + (output_tokens / 1_000_000 * 2)
 
-                lines.append(f"\n**LLM 调用统计**:\n")
+                lines.append("\n**LLM 调用统计**:\n")
                 lines.append(f"- 调用次数: {calls}\n")
                 lines.append(f"- 输入 Token: {input_tokens:,}\n")
                 lines.append(f"- 输出 Token: {output_tokens:,}\n")
@@ -1361,7 +1358,7 @@ class MultiPersonalityBacktest(BaseBacktestEngine):
             best = sorted_results[0]
             worst = sorted_results[-1]
 
-            lines.append(f"\n### 关键发现\n\n")
+            lines.append("\n### 关键发现\n\n")
             lines.append(f"1. **最佳表现**: **{best.personality}** 人格，收益率 {best.total_return:+.2f}%\n")
             lines.append(f"2. **最差表现**: **{worst.personality}** 人格，收益率 {worst.total_return:+.2f}%\n")
 
@@ -1369,7 +1366,7 @@ class MultiPersonalityBacktest(BaseBacktestEngine):
             lines.append(f"3. **收益差距**: 最佳与最差之间相差 {diff:.2f} 个百分点\n")
 
             # 风险调整后收益
-            lines.append(f"\n### 风险调整后表现\n\n")
+            lines.append("\n### 风险调整后表现\n\n")
             sharpe_sorted = sorted(
                 sorted_results,
                 key=lambda x: x.sharpe_ratio,
@@ -1379,7 +1376,7 @@ class MultiPersonalityBacktest(BaseBacktestEngine):
                 best_sharpe = sharpe_sorted[0]
                 lines.append(f"- **最高夏普比率**: {best_sharpe.personality} ({best_sharpe.sharpe_ratio:.2f})\n")
 
-            lines.append(f"\n### 人格特征验证\n\n")
+            lines.append("\n### 人格特征验证\n\n")
             for r in sorted_results:
                 if r.personality == "conservative":
                     lines.append(f"- **保守型**: 回撤 {r.max_drawdown:.2f}%，交易 {r.trade_count} 次 - "

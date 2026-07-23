@@ -85,13 +85,15 @@ class AutoSynthesisTrainer:
             
             # Look for big moves
             moves = df[df['change_pct'].abs() > threshold].copy()
-            if moves.empty: continue
+            if moves.empty:
+                continue
             
             count = 0
             for idx, row in moves.iterrows():
                 # Ensure we have history before this day AND enough future days for eval
                 date_idx = df.index.get_loc(idx)
-                if date_idx < 50 or date_idx + pred_len > len(df): continue
+                if date_idx < 50 or date_idx + pred_len > len(df):
+                    continue
                 
                 shocks.append({
                     'ticker': ticker,
@@ -101,7 +103,8 @@ class AutoSynthesisTrainer:
                     'target': df.iloc[date_idx:date_idx + pred_len] # Now capturing pred_len days
                 })
                 count += 1
-                if count >= limit_per_stock: break
+                if count >= limit_per_stock:
+                    break
         
         logger.info(f"✨ Discovered {len(shocks)} potential price shocks over the last {days} days.")
         return shocks
@@ -251,7 +254,7 @@ class AutoSynthesisTrainer:
         self.model.train()
         
         loss_history = []
-        logger.info(f"🚀 Training for 30 epochs...")
+        logger.info("🚀 Training for 30 epochs...")
         for epoch in range(30):
             total_loss = 0
             for item in train_set:
@@ -411,6 +414,6 @@ if __name__ == "__main__":
         res = trainer.db.execute_query("SELECT code FROM stock_list")
         all_tickers = [row['code'] for row in res]
 
-    logger.info(f"🚀 Starting training on potential stocks (1-year scan)...")
+    logger.info("🚀 Starting training on potential stocks (1-year scan)...")
     # 为了演示，我们扫描前 100 个股票，寻找最近一年的冲击点
     trainer.run_synthesis_and_train(all_tickers[:100], pred_len=1)

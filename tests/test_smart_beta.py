@@ -13,7 +13,7 @@ Tests the Smart Beta index enhancement system components:
 
 import sys
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 import pandas as pd
 import numpy as np
 
@@ -23,7 +23,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "deepfund" / "src"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
 print(f"Project root: {PROJECT_ROOT}")
-print(f"Python path updated")
+print("Python path updated")
 
 
 def test_config():
@@ -33,11 +33,11 @@ def test_config():
     print("=" * 60)
 
     try:
-        from smart_beta.config import SmartBetaConfig, get_smart_beta_config
+        from smart_beta.config import SmartBetaConfig
 
         # Test default config
         config = SmartBetaConfig()
-        print(f"✓ Default config created")
+        print("✓ Default config created")
         print(f"  - Index code: {config.index_code}")
         print(f"  - Rebalance frequency: {config.rebalance_frequency}")
         print(f"  - Lookback days: {config.lookback_days}")
@@ -46,7 +46,7 @@ def test_config():
 
         # Validate config
         config.validate()
-        print(f"✓ Configuration validated")
+        print("✓ Configuration validated")
 
         # Test beta target by macro state
         for state in ["expansion", "slowdown", "recession", "recovery"]:
@@ -69,10 +69,10 @@ def test_factor_engine():
     print("=" * 60)
 
     try:
-        from smart_beta.factor_engine import FactorEngine, FactorData
+        from smart_beta.factor_engine import FactorEngine
 
         engine = FactorEngine()
-        print(f"✓ Factor engine initialized")
+        print("✓ Factor engine initialized")
 
         # Create synthetic test data
         np.random.seed(42)
@@ -149,11 +149,11 @@ def test_optimizer():
     print("=" * 60)
 
     try:
-        from smart_beta.optimizer import SmartBetaOptimizer, OptimizationResult
+        from smart_beta.optimizer import SmartBetaOptimizer
         from smart_beta.factor_engine import FactorData
 
         optimizer = SmartBetaOptimizer()
-        print(f"✓ Optimizer initialized")
+        print("✓ Optimizer initialized")
 
         # Create test data
         tickers = ["STOCK_A", "STOCK_B", "STOCK_C", "STOCK_D", "STOCK_E"]
@@ -183,14 +183,14 @@ def test_optimizer():
             factor_data=factor_data
         )
 
-        print(f"✓ Optimization result:")
+        print("✓ Optimization result:")
         print(f"  - Success: {result.success}")
         print(f"  - Message: {result.message}")
         print(f"  - Tracking error: {result.tracking_error:.6f}")
         print(f"  - Turnover: {result.turnover:.4f}")
 
         if result.weights:
-            print(f"  - Weights:")
+            print("  - Weights:")
             for t, w in sorted(result.weights.items(), key=lambda x: x[1], reverse=True):
                 print(f"      {t}: {w:.4f}")
 
@@ -214,10 +214,10 @@ def test_macro_analyzer():
     print("=" * 60)
 
     try:
-        from smart_beta.macro_analyzer import MacroStateAnalyzer, MacroState
+        from smart_beta.macro_analyzer import MacroStateAnalyzer
 
         analyzer = MacroStateAnalyzer()
-        print(f"✓ Macro analyzer initialized")
+        print("✓ Macro analyzer initialized")
 
         # Test with expansion indicators
         expansion_indicators = {
@@ -229,7 +229,7 @@ def test_macro_analyzer():
         }
 
         result = analyzer.analyze(expansion_indicators, datetime.now())
-        print(f"  - Expansion scenario:")
+        print("  - Expansion scenario:")
         print(f"      State: {result.state.value}")
         print(f"      Score: {result.score:.4f}")
         print(f"      Beta adjustment: {result.beta_adjustment:.4f}")
@@ -245,7 +245,7 @@ def test_macro_analyzer():
         }
 
         result = analyzer.analyze(recession_indicators, datetime.now())
-        print(f"  - Recession scenario:")
+        print("  - Recession scenario:")
         print(f"      State: {result.state.value}")
         print(f"      Score: {result.score:.4f}")
         print(f"      Beta adjustment: {result.beta_adjustment:.4f}")
@@ -267,10 +267,10 @@ def test_news_freeze():
     print("=" * 60)
 
     try:
-        from smart_beta.news_freeze import NewsFreezeMechanism, FreezeStatus
+        from smart_beta.news_freeze import NewsFreezeMechanism
 
         freeze = NewsFreezeMechanism()
-        print(f"✓ News freeze mechanism initialized")
+        print("✓ News freeze mechanism initialized")
 
         # Test with normal market
         decision = freeze.check(
@@ -279,7 +279,7 @@ def test_news_freeze():
             news_items=None,
             current_date=datetime.now()
         )
-        print(f"  - Normal market:")
+        print("  - Normal market:")
         print(f"      Status: {decision.status.value}")
         print(f"      Reason: {decision.reason.value}")
         print(f"      Confidence: {decision.confidence:.2f}")
@@ -291,7 +291,7 @@ def test_news_freeze():
             news_items=None,
             current_date=datetime.now()
         )
-        print(f"  - High volatility (VIX=35):")
+        print("  - High volatility (VIX=35):")
         print(f"      Status: {decision.status.value}")
         print(f"      Reason: {decision.reason.value}")
         print(f"      Confidence: {decision.confidence:.2f}")
@@ -307,7 +307,7 @@ def test_news_freeze():
             ],
             current_date=datetime.now()
         )
-        print(f"  - Market crash (-7%):")
+        print("  - Market crash (-7%):")
         print(f"      Status: {decision.status.value}")
         print(f"      Reason: {decision.reason.value}")
         print(f"      Confidence: {decision.confidence:.2f}")
@@ -331,10 +331,10 @@ def test_allocator():
     print("=" * 60)
 
     try:
-        from smart_beta.smart_beta_allocator import SmartBetaAllocator, AllocationResult
+        from smart_beta.smart_beta_allocator import SmartBetaAllocator
 
         allocator = SmartBetaAllocator()
-        print(f"✓ Smart Beta allocator initialized")
+        print("✓ Smart Beta allocator initialized")
 
         # Create synthetic test data
         np.random.seed(42)
@@ -379,7 +379,7 @@ def test_allocator():
             macro_indicators=macro_indicators
         )
 
-        print(f"✓ Allocation result:")
+        print("✓ Allocation result:")
         print(f"  - Success: {result.success}")
         print(f"  - Message: {result.message}")
         print(f"  - Tracking error: {result.tracking_error:.6f}")
@@ -387,7 +387,7 @@ def test_allocator():
         print(f"  - Turnover: {result.turnover:.4f}")
 
         if result.weights:
-            print(f"  - Top 5 weights:")
+            print("  - Top 5 weights:")
             sorted_weights = sorted(result.weights.items(), key=lambda x: x[1], reverse=True)[:5]
             for t, w in sorted_weights:
                 print(f"      {t}: {w:.4f}")
@@ -439,7 +439,7 @@ def test_metrics():
         alpha = PerformanceMetrics.alpha(portfolio_returns, benchmark_returns)
         excess = PerformanceMetrics.excess_return(portfolio_returns, benchmark_returns)
 
-        print(f"✓ Smart Beta metrics calculated:")
+        print("✓ Smart Beta metrics calculated:")
         print(f"  - Tracking Error: {te:.4f}%")
         print(f"  - Information Ratio: {ir:.4f}")
         print(f"  - Beta: {beta:.4f}")

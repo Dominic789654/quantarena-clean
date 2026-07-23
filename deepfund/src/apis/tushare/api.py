@@ -8,8 +8,8 @@ import os
 import time
 import pandas as pd
 from datetime import datetime, timedelta
-from apis.common_model import OHLCVCandle, MediaNews
-from .api_model import TushareInsiderTrade, TushareFundamentals, TushareNews, CNEconomicIndicators
+from apis.common_model import MediaNews
+from .api_model import TushareInsiderTrade, TushareFundamentals, CNEconomicIndicators
 
 # Import stats for cache tracking
 try:

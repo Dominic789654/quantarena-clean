@@ -9,10 +9,10 @@ Implements factor calculations for index enhancement strategies:
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 import warnings
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)

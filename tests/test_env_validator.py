@@ -7,7 +7,6 @@ Tests the EnvValidator class and validate_env function.
 import os
 import sys
 import pytest
-from unittest.mock import patch, MagicMock
 from pathlib import Path
 
 # Add project paths

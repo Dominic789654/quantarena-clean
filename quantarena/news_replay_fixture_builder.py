@@ -172,12 +172,12 @@ def _iter_json_payload_rows(payload: Any) -> Iterable[_InputRow]:
     if not isinstance(payload, Mapping):
         raise NewsReplayFixtureBuildError("JSON input must be an object or array")
 
-    for field in COLLECTION_FIELDS:
-        collection = payload.get(field)
+    for field_name in COLLECTION_FIELDS:
+        collection = payload.get(field_name)
         if isinstance(collection, list):
             for index, item in enumerate(collection, start=1):
                 if not isinstance(item, Mapping):
-                    raise NewsReplayFixtureBuildError(f"JSON {field} item {index} must be an object")
+                    raise NewsReplayFixtureBuildError(f"JSON {field_name} item {index} must be an object")
                 yield _InputRow(index, dict(item))
             return
 
@@ -271,8 +271,8 @@ def _normalize_row(input_row: _InputRow) -> dict[str, Any]:
 
 
 def _string_field(row: Mapping[str, Any], fields: tuple[str, ...]) -> str | None:
-    for field in fields:
-        value = row.get(field)
+    for field_name in fields:
+        value = row.get(field_name)
         if value is None:
             continue
         text = str(value).strip()
@@ -283,8 +283,8 @@ def _string_field(row: Mapping[str, Any], fields: tuple[str, ...]) -> str | None
 
 def _publish_time_field(row: Mapping[str, Any]) -> str | None:
     raw_value: Any = None
-    for field in PUBLISH_TIME_FIELDS:
-        value = row.get(field)
+    for field_name in PUBLISH_TIME_FIELDS:
+        value = row.get(field_name)
         if value is not None and str(value).strip():
             raw_value = value
             break

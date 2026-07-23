@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import glob
 from loguru import logger
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 # Setup paths
 KRONOS_DIR = os.path.dirname(os.path.abspath(__file__))

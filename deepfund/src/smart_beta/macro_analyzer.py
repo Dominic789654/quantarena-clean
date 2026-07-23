@@ -6,7 +6,7 @@ Analyzes macroeconomic conditions to determine market state and adjust Smart Bet
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime
 import numpy as np
 from enum import Enum
 

@@ -7,7 +7,7 @@ import os
 import sys
 import time
 import concurrent.futures
-from typing import Dict, Any, List, Tuple
+from typing import Any, List
 from dataclasses import dataclass
 from pydantic import BaseModel, Field
 
@@ -224,7 +224,7 @@ class DoubaoParallelTester:
 
             prompt = "Test token tracking for NVDA analysis"
 
-            result = agent_call(
+            agent_call(
                 prompt=prompt,
                 llm_config=self.config,
                 pydantic_model=AnalystSignal,
@@ -386,7 +386,7 @@ def main():
     seq_time = sum(r.duration for r in seq_results)
     par_time = sum(r.duration for r in par_results)
 
-    print(f"\n📈 Performance Comparison:")
+    print("\n📈 Performance Comparison:")
     print(f"  Sequential: {seq_time:.2f}s")
     print(f"  Parallel:   {par_time:.2f}s")
     print(f"  Speedup:    {seq_time/par_time:.2f}x")

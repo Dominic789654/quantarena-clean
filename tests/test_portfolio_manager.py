@@ -6,7 +6,7 @@ and share calculation functions.
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 # Add paths
 import sys
@@ -22,7 +22,7 @@ from deepfund.src.agents.portfolio_manager import (
     thresholds
 )
 from deepfund.src.graph.schema import FundState, Portfolio, Position, Decision, AnalystSignal, PositionRisk
-from deepfund.src.graph.constants import AgentKey, Action, Signal
+from deepfund.src.graph.constants import Action, Signal
 
 
 def create_test_state(

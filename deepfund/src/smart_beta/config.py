@@ -5,8 +5,7 @@ Configuration for the Smart Beta Index Enhancement System.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any
-import os
+from typing import Optional, Dict
 import yaml
 from pathlib import Path
 

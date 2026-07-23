@@ -7,17 +7,15 @@ Implements quadratic programming optimization for Smart Beta strategies:
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .factor_engine import FactorData
 import numpy as np
-import pandas as pd
-from datetime import datetime
 
 try:
     from scipy.optimize import minimize
-    from scipy.linalg import sqrtm
+    from scipy.linalg import sqrtm  # noqa: F401 — availability probe
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False

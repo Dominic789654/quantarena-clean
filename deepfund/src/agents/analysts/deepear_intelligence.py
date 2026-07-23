@@ -16,9 +16,9 @@ from .base import BaseAnalyst
 
 # Import DeepEar client
 try:
-    from integrations.deepear_client import DeepEarClient, isq_to_signal
+    from integrations.deepear_client import DeepEarClient, isq_to_signal  # noqa: F401 — availability probe
 except ImportError:
-    from integrations.deepear_client import DeepEarClient, isq_to_signal
+    from integrations.deepear_client import DeepEarClient
 
 
 # Analyst prompt template (for reference, not used in LLM call)

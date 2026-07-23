@@ -3,7 +3,6 @@ Unit tests for error handling utilities.
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
 
 # Add paths

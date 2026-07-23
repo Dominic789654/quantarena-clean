@@ -487,15 +487,15 @@ def _validate_record_sets(croissant: dict[str, Any], result: ArtifactValidationR
             )
             invalid_record_sets.append(str(record_id))
             continue
-        for field in fields:
-            source = field.get("source") if isinstance(field, dict) else None
+        for field_spec in fields:
+            source = field_spec.get("source") if isinstance(field_spec, dict) else None
             if not isinstance(source, dict):
-                field_id = field.get("@id", "<unknown>") if isinstance(field, dict) else "<unknown>"
+                field_id = field_spec.get("@id", "<unknown>") if isinstance(field_spec, dict) else "<unknown>"
                 invalid_record_sets.append(str(field_id))
                 continue
             extract = source.get("extract")
             if not isinstance(extract, dict) or not extract.get("column"):
-                invalid_record_sets.append(str(field.get("@id", "<unknown>")))
+                invalid_record_sets.append(str(field_spec.get("@id", "<unknown>")))
 
     result.add_check(
         "croissant_record_sources",

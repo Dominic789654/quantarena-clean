@@ -4,7 +4,7 @@ Policy Analyst - Refactored to use BaseAnalyst
 Analyzes fiscal and monetary policy news to provide trading signals.
 """
 
-from typing import Any, Dict, List
+from typing import Dict, List
 from graph.schema import FundState
 from graph.constants import AgentKey
 from llm.prompt import POLICY_PROMPT

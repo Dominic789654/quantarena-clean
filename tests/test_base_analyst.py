@@ -6,7 +6,7 @@ produce the same results as the original implementations.
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from datetime import datetime
 
 # Add paths
@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "deepfund" / "src"))
 
 from deepfund.src.agents.analysts.base import BaseAnalyst
-from deepfund.src.graph.schema import FundState, Portfolio, Position, AnalystSignal
+from deepfund.src.graph.schema import FundState, Portfolio, AnalystSignal
 from deepfund.src.graph.constants import AgentKey, Signal
 from deepfund.src.apis.router import Router
 
