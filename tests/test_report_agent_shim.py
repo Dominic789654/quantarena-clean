@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from tests.report_agent_harness import (
     FakeDatabaseManager,
     FakeModel,
@@ -94,14 +96,17 @@ class TestShimClassIdentity:
 
 
 class TestNewNamespaceIsTheRealSeam:
-    def test_patching_report_agent_module_agent_does_not_intercept(self, monkeypatch):
-        """Patching the OLD (shim) module's `Agent` attribute (which the
-        shim does not even re-export) has no effect on construction --
-        proving the shim is not where `ReportAgent`'s methods resolve
-        `Agent` from."""
+    def test_patching_report_agent_module_agent_fails_loudly(self, monkeypatch):
+        """The OLD (shim) module does not re-export `Agent`, so an
+        old-style `monkeypatch.setattr` against it raises AttributeError
+        instead of silently no-opping -- the shim is not where
+        `ReportAgent`'s methods resolve `Agent` from, and a stale patch
+        target hard-fails rather than passing vacuously."""
         import deepear.src.agents.report_agent as report_agent_shim
 
         assert not hasattr(report_agent_shim, "Agent")
+        with pytest.raises(AttributeError):
+            monkeypatch.setattr(report_agent_shim, "Agent", object())
 
     def test_patching_report_dot_agent_module_agent_intercepts_construction(self, monkeypatch):
         import deepear.src.agents.report.agent as report_agent_module
