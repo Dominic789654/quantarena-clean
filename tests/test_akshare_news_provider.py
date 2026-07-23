@@ -513,3 +513,84 @@ def test_akshare_news_api_refresh_rewrites_snapshot(monkeypatch):
         api_local = akshare_api_mod.AKShareNewsAPI()
         local_only = api_local.get_news(ticker="600519", trading_date=datetime(2025, 9, 1), limit=5, market="cn")
     assert [item.title for item in local_only] == ["new news"]
+
+
+def test_backdated_empty_em_falls_back_to_cninfo_disclosures():
+    """Backdated replay with an empty stock_news_em feed must query cninfo.
+
+    stock_news_em only serves the latest ~10 items per ticker, so replayed
+    past windows otherwise degrade to an empty news channel (evaluated
+    2026-07: 0/20 universe tickers reachable at a 3-month-old date).
+    """
+    cninfo_df = _build_df(
+        [
+            {
+                "代码": "600519",
+                "简称": "贵州茅台",
+                "公告标题": "贵州茅台2026年第一季度报告",
+                "公告时间": "2026-04-25",
+                "公告链接": "https://cninfo.example.com/q1",
+            },
+            {
+                "代码": "600519",
+                "简称": "贵州茅台",
+                "公告标题": "窗口外公告应被过滤",
+                "公告时间": "2026-04-10",
+                "公告链接": "https://cninfo.example.com/old",
+            },
+        ]
+    )
+    fake_ak = Mock()
+    fake_ak.stock_news_em.return_value = _build_df([])
+    fake_ak.stock_zh_a_disclosure_report_cninfo.return_value = cninfo_df
+
+    with patch.object(akshare_api_mod, "ak", fake_ak):
+        api = akshare_api_mod.AKShareNewsAPI()
+        news = api.get_news(
+            ticker="600519", trading_date=datetime(2026, 4, 28), limit=5, market="cn"
+        )
+
+    call = fake_ak.stock_zh_a_disclosure_report_cninfo.call_args
+    assert call.kwargs["symbol"] == "600519"
+    assert call.kwargs["start_date"] == "20260424"  # lookback_days=5 -> T-4
+    assert call.kwargs["end_date"] == "20260428"
+    assert [n.title for n in news] == ["贵州茅台2026年第一季度报告"]
+    assert news[0].publisher == "巨潮资讯公告"
+    assert api.last_source == "network:akshare_cninfo"
+    # notice fallback must not fire once cninfo produced items
+    assert not fake_ak.stock_notice_report.called
+
+
+def test_live_trading_date_does_not_query_cninfo():
+    """Same-day (live) calls keep the original em -> notice behavior."""
+    fake_ak = Mock()
+    fake_ak.stock_news_em.return_value = _build_df([])
+    fake_ak.stock_notice_report.return_value = _build_df([])
+
+    with patch.object(akshare_api_mod, "ak", fake_ak):
+        api = akshare_api_mod.AKShareNewsAPI()
+        api.get_news(
+            ticker="600519",
+            trading_date=datetime.utcnow(),
+            limit=5,
+            market="cn",
+        )
+
+    assert not fake_ak.stock_zh_a_disclosure_report_cninfo.called
+
+
+def test_cninfo_failure_degrades_to_notice_fallback_not_raise():
+    """A cninfo outage must not break the news call; notice fallback still runs."""
+    fake_ak = Mock()
+    fake_ak.stock_news_em.return_value = _build_df([])
+    fake_ak.stock_zh_a_disclosure_report_cninfo.side_effect = RuntimeError("cninfo down")
+    fake_ak.stock_notice_report.return_value = _build_df([])
+
+    with patch.object(akshare_api_mod, "ak", fake_ak):
+        api = akshare_api_mod.AKShareNewsAPI()
+        news = api.get_news(
+            ticker="600519", trading_date=datetime(2026, 4, 28), limit=5, market="cn"
+        )
+
+    assert news == []
+    assert fake_ak.stock_notice_report.called

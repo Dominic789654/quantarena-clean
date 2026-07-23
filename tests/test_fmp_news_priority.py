@@ -1,4 +1,5 @@
 from datetime import datetime
+from unittest.mock import Mock
 
 import sys
 from pathlib import Path
@@ -260,3 +261,49 @@ def test_fmp_stock_news_omits_date_range_for_live_calls(monkeypatch):
     api.get_news(ticker="MSFT", trading_date=None, limit=5)
 
     assert "from" not in captured and "to" not in captured
+
+
+def test_fmp_request_retries_transient_transport_errors(monkeypatch):
+    """Intermittent SSL/connection drops must be retried, not surfaced.
+
+    Observed on the 2026-04 US 3M replay: ~18% of news calls failed with
+    SSLEOFError and degraded to [Error]->Neutral signals.
+    """
+    import requests as _requests
+
+    api = _build_api(monkeypatch)
+    monkeypatch.setattr("apis.fmp.api.time.sleep", lambda _s: None)
+
+    ok_response = Mock()
+    ok_response.status_code = 200
+    ok_response.raise_for_status = Mock()
+    ok_response.text = "[]"
+    ok_response.json.return_value = []
+
+    attempts = []
+
+    def flaky_get(url, params=None, timeout=None):
+        attempts.append(url)
+        if len(attempts) < 3:
+            raise _requests.exceptions.SSLError("UNEXPECTED_EOF_WHILE_READING")
+        return ok_response
+
+    monkeypatch.setattr(api.session, "get", flaky_get)
+    assert api._request_json("/stable/news/stock", {"symbols": "KO"}) == []
+    assert len(attempts) == 3  # 2 retries then success
+
+
+def test_fmp_request_raises_after_retry_exhaustion(monkeypatch):
+    import requests as _requests
+
+    import pytest as _pytest
+
+    api = _build_api(monkeypatch)
+    monkeypatch.setattr("apis.fmp.api.time.sleep", lambda _s: None)
+
+    def always_broken(url, params=None, timeout=None):
+        raise _requests.exceptions.SSLError("UNEXPECTED_EOF_WHILE_READING")
+
+    monkeypatch.setattr(api.session, "get", always_broken)
+    with _pytest.raises(_requests.exceptions.SSLError):
+        api._request_json("/stable/news/stock", {"symbols": "KO"})

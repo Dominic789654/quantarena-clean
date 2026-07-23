@@ -7,6 +7,7 @@ https://site.financialmodelingprep.com/developer/docs/stable
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -31,16 +32,36 @@ class FMPAPI:
         self.session = requests.Session()
         self.timeout = 20
 
+    # Transient transport failures (observed: intermittent SSLEOFError /
+    # UNEXPECTED_EOF_WHILE_READING that degraded ~18% of news calls to
+    # [Error]->Neutral on the 2026-04 US 3M replay). requests' SSLError
+    # subclasses ConnectionError, but both are listed for clarity.
+    _RETRYABLE_TRANSPORT_ERRORS = (
+        requests.exceptions.SSLError,
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+    )
+    MAX_TRANSPORT_RETRIES = 2  # 3 attempts total
+
     def _request_json(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
         """Perform GET request and parse JSON response."""
         query = dict(params or {})
         query["apikey"] = self.api_key
 
-        response = self.session.get(
-            url=f"{self.BASE_URL}{path}",
-            params=query,
-            timeout=self.timeout,
-        )
+        attempt = 0
+        while True:
+            try:
+                response = self.session.get(
+                    url=f"{self.BASE_URL}{path}",
+                    params=query,
+                    timeout=self.timeout,
+                )
+                break
+            except self._RETRYABLE_TRANSPORT_ERRORS:
+                if attempt >= self.MAX_TRANSPORT_RETRIES:
+                    raise
+                time.sleep(0.5 * (2 ** attempt))  # 0.5s, 1s
+                attempt += 1
 
         # FMP uses 402 for plan-restricted endpoints
         if response.status_code == 402:
