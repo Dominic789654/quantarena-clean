@@ -220,6 +220,34 @@ benchmark:
     assert runtime["config"]["benchmark"]["index_code"] == "QQQ"
 
 
+def test_execute_backtest_mode_supports_us_experiment_universe_config(monkeypatch):
+    config_path = PROJECT_ROOT / "deepfund" / "src" / "config" / "us_experiment_universe.yaml"
+    captured = {}
+
+    def _fake_run_backtest(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(run_id="test", metrics={}, errors=[])
+
+    monkeypatch.setattr("run._print_backtest_result", lambda result: 0)
+    monkeypatch.setattr("run._validate_backtest_environment_for_runtime", lambda runtime: True)
+
+    args = _make_args(
+        config=str(config_path),
+        tickers=None,
+        analysts=DEFAULT_BACKTEST_ANALYSTS_ARG,
+        market="us",
+    )
+
+    exit_code = _execute_backtest_mode(args, _fake_run_backtest)
+
+    assert exit_code == 0
+    assert len(captured["tickers"]) == 20
+    assert captured["tickers"][0] == "JPM"
+    assert captured["tickers"][-1] == "GE"
+    assert captured["config"]["experiment_universe"]["name"] == "us_5x4_style_matrix"
+    assert captured["config"]["market"] == "us"
+
+
 def test_execute_backtest_mode_supports_experiment_universe_config(monkeypatch):
     config_path = PROJECT_ROOT / "deepfund" / "src" / "config" / "ashare_experiment_universe.yaml"
     captured = {}

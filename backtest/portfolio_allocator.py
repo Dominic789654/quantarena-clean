@@ -19,6 +19,12 @@ from shared.utils.path_manager import setup_paths
 setup_paths()
 from shared.config.profile_registry import PROFILE_ALIASES, normalize_profile_name
 
+try:
+    from llm.inference import record_token_usage
+    TOKEN_TRACKER_AVAILABLE = True
+except ImportError:
+    TOKEN_TRACKER_AVAILABLE = False
+
 from deepear.src.utils.llm.factory import get_model
 from agno.agent import Agent
 
@@ -185,6 +191,14 @@ class PortfolioAllocator:
             agent = Agent(model=model, markdown=False)
             response = agent.run(prompt)
             allocations = self._parse_allocation(response.content, list(signals.keys()))
+            # Keep portfolio-mode spend visible in run manifests: estimate
+            # when the agno response carries no usage metadata.
+            if TOKEN_TRACKER_AVAILABLE:
+                record_token_usage(
+                    "portfolio_allocator",
+                    *self._estimate_tokens(prompt, str(response.content or "")),
+                    self.llm_provider,
+                )
 
             logger.info(f"Portfolio allocation for {trading_date}: {allocations}")
             return allocations
@@ -314,6 +328,11 @@ class PortfolioAllocator:
         if total > 1.0:
             allocations = {ticker: weight / total for ticker, weight in allocations.items()}
         return allocations
+
+    @staticmethod
+    def _estimate_tokens(prompt: str, response_text: str = "") -> tuple[int, int]:
+        """Best-effort token estimate when provider metadata is unavailable."""
+        return max(1, len(prompt or "") // 3), max(1, len(response_text or "") // 3 or 1)
 
     def _parse_allocation(self, content: str, tickers: List[str]) -> Dict[str, float]:
         """解析 LLM 输出的仓位分配"""

@@ -159,6 +159,19 @@ def test_fetch_data_warns_on_historical_trading_date():
     assert data["ticker_stats"]  # the warning never blocks data
 
 
+def test_lookahead_warning_suppressed_under_replay(monkeypatch):
+    """local_only snapshot replay serves point-in-time data — no warning."""
+    monkeypatch.setenv("APEWISDOM_SNAPSHOT_MODE", "local_only")
+    analyst = SocialSentimentAnalyst()
+    router = _make_router()
+
+    old_state = _make_state()
+    old_state["trading_date"] = "2025-01-06"
+    with patch("deepfund.src.agents.analysts.social_sentiment.logger") as mock_logger:
+        analyst.fetch_data(old_state, router)
+        assert not mock_logger.warning.called
+
+
 def test_behavioral_momentum_config_includes_social_sentiment():
     import yaml
     from pathlib import Path

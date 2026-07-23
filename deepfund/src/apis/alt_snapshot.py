@@ -32,13 +32,24 @@ DEFAULT_LOOKBACK_DAYS = 7
 
 
 class SnapshotStore:
-    """File-backed, date-partitioned snapshot store for one provider."""
+    """File-backed, date-partitioned snapshot store for one provider.
 
-    _lock = threading.Lock()
+    Note: snapshot days are keyed by the capture host's local calendar date
+    (date.today()); if the host timezone crosses midnight during the target
+    market's trading session, capture and replay day-keys can differ by one.
+    Run daily capture in (or aligned to) the market's timezone.
+    """
+
+    # One lock per provider prefix: same-file writers synchronize without
+    # unrelated providers serializing on each other.
+    _locks: dict = {}
+    _locks_guard = threading.Lock()
 
     def __init__(self, env_prefix: str, default_dir: str):
         self.env_prefix = env_prefix
         self.default_dir = default_dir
+        with SnapshotStore._locks_guard:
+            self._lock = SnapshotStore._locks.setdefault(env_prefix, threading.Lock())
 
     # Env is read per call so tests and long-lived processes can flip modes.
     @property
@@ -109,8 +120,16 @@ class SnapshotStore:
                 return payload
         return None
 
+    def has_for_day(self, key: str, as_of: Optional[date | datetime] = None) -> bool:
+        """Cheap existence check without parsing the snapshot payload."""
+        return self._path_for(key, self._coerce_day(as_of)).exists()
+
     def save(self, key: str, payload: Any) -> Optional[Path]:
-        """Persist a snapshot for today. Never raises; returns the path or None."""
+        """Persist a snapshot for today. Never raises; returns the path or None.
+
+        Written atomically (temp file + os.replace) so a concurrent replay
+        process never observes a torn file.
+        """
         path = self._path_for(key, date.today())
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -118,11 +137,11 @@ class SnapshotStore:
                 "captured_at": datetime.now().isoformat(timespec="seconds"),
                 "payload": payload,
             }
+            content = json.dumps(envelope, ensure_ascii=False, default=str)
+            tmp_path = path.with_suffix(f".tmp-{os.getpid()}")
             with self._lock:
-                path.write_text(
-                    json.dumps(envelope, ensure_ascii=False, default=str),
-                    encoding="utf-8",
-                )
+                tmp_path.write_text(content, encoding="utf-8")
+                os.replace(tmp_path, path)
             return path
         except Exception:
             return None

@@ -1072,24 +1072,35 @@ class ReportGenerator:
 
     @staticmethod
     def _git_revision() -> Dict[str, Any]:
-        """Best-effort git provenance; never fails the report."""
+        """Best-effort git provenance; never fails the report.
+
+        SHA and dirty-state are probed independently so a slow `git status`
+        (e.g. large untracked data dirs) cannot discard an available SHA.
+        """
         import subprocess
 
+        repo_root = Path(__file__).resolve().parents[1]
+        sha: Optional[str] = None
+        dirty: Optional[bool] = None
         try:
-            repo_root = Path(__file__).resolve().parents[1]
-            sha = subprocess.run(
+            probe = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
                 cwd=repo_root, capture_output=True, text=True, timeout=5,
-            ).stdout.strip()
-            dirty = bool(subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=repo_root, capture_output=True, text=True, timeout=5,
-            ).stdout.strip())
-            if sha:
-                return {"sha": sha, "dirty": dirty}
+            )
+            sha = probe.stdout.strip() or None if probe.returncode == 0 else None
         except Exception:
-            pass
-        return {"sha": None, "dirty": None}
+            sha = None
+        if sha:
+            try:
+                status = subprocess.run(
+                    ["git", "status", "--porcelain"],
+                    cwd=repo_root, capture_output=True, text=True, timeout=5,
+                )
+                if status.returncode == 0:
+                    dirty = bool(status.stdout.strip())
+            except Exception:
+                dirty = None
+        return {"sha": sha, "dirty": dirty}
 
     def generate_run_manifest(
         self,

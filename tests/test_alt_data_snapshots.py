@@ -144,6 +144,44 @@ def test_apewisdom_local_only_missing_snapshot_raises(monkeypatch, ape):
     ape.session.get.assert_not_called()
 
 
+def test_apewisdom_refresh_backfills_snapshot_on_warm_ttl_cache(monkeypatch, ape, tmp_path):
+    """A warm in-memory TTL cache must not skip daily capture: if today's
+    snapshot file is missing (e.g. day rolled over), the cache hit backfills it."""
+    monkeypatch.setenv("APEWISDOM_SNAPSHOT_MODE", "refresh")
+
+    ape.get_trending()  # fetch + save; memory cache now warm
+    snapshot = next(tmp_path.rglob("*.json"))
+    snapshot.unlink()  # simulate the day boundary: no snapshot for "today"
+
+    ape.get_trending()  # served from TTL cache — must still write the snapshot
+
+    assert ape.session.get.call_count == 1
+    assert len(list(tmp_path.rglob("*.json"))) == 1
+
+
+def test_apewisdom_prefer_local_serves_same_day_and_saves(monkeypatch, ape, tmp_path):
+    monkeypatch.setenv("APEWISDOM_SNAPSHOT_MODE", "prefer_local")
+
+    ape.get_trending()  # miss -> live fetch -> save today's snapshot
+    assert ape.session.get.call_count == 1
+    assert len(list(tmp_path.rglob("*.json"))) == 1
+
+    ApeWisdomAPI.clear_cache()  # drop memory cache; snapshot must serve
+    mentions = ape.get_trending()
+    assert mentions[0].ticker == "MU"
+    assert ape.session.get.call_count == 1  # same-day snapshot hit, no refetch
+
+
+def test_apewisdom_prefer_local_misses_other_day_and_fetches_live(monkeypatch, ape):
+    """prefer_local is exact-day: a historical as_of without a snapshot
+    falls through to a live fetch (with the analyst-level warning)."""
+    monkeypatch.setenv("APEWISDOM_SNAPSHOT_MODE", "prefer_local")
+
+    ape.get_trending(as_of=datetime(2020, 1, 6))
+
+    assert ape.session.get.call_count == 1
+
+
 def test_apewisdom_off_mode_never_touches_disk(monkeypatch, ape, tmp_path):
     monkeypatch.delenv("APEWISDOM_SNAPSHOT_MODE", raising=False)
 
@@ -163,6 +201,38 @@ SUBMISSIONS_FIXTURE = {
         "accessionNo": ["0000950123-26-005555"], "primaryDocument": ["a.xml"],
     }},
 }
+
+
+FORM4_FIXTURE = {
+    "hits": {"hits": [{
+        "_source": {
+            "ciks": ["0001045810"],
+            "display_names": ["NVIDIA CORP  (NVDA)  (CIK 0001045810)"],
+            "file_type": "4",
+            "file_date": "2026-07-01",
+            "adsh": "0001045810-26-000123",
+        }
+    }]}
+}
+
+
+def test_secedgar_form4_local_only_replays_without_network(monkeypatch, tmp_path):
+    monkeypatch.setenv("SEC_EDGAR_USER_AGENT", "QuantArenaTest/1.0 (test@example.com)")
+    monkeypatch.setenv("SEC_EDGAR_SNAPSHOT_DIR", str(tmp_path))
+    monkeypatch.setenv("SEC_EDGAR_SNAPSHOT_MODE", "refresh")
+
+    api = SECEdgarAPI()
+    api.min_request_interval = 0.0
+    api.session.get = Mock(return_value=_mock_response(FORM4_FIXTURE))
+    trading_date = datetime.now()
+    api.get_insider_filings("NVDA", trading_date=trading_date)  # capture
+    SECEdgarAPI.clear_cache()
+
+    monkeypatch.setenv("SEC_EDGAR_SNAPSHOT_MODE", "local_only")
+    filings = api.get_insider_filings("NVDA", trading_date=trading_date)
+
+    assert filings[0].filing_date == "2026-07-01"
+    assert api.session.get.call_count == 1  # replay served from disk
 
 
 def test_secedgar_local_only_replays_without_network(monkeypatch, tmp_path):
