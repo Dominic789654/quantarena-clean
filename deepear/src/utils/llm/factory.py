@@ -28,6 +28,10 @@ from agno.models.dashscope import DashScope
 from agno.models.deepseek import DeepSeek
 from agno.models.openrouter import OpenRouter
 
+# Credential knowledge (API-key env vars, base URLs) is shared with the
+# deepfund langchain provider registry; only agno model classes live here.
+from shared.config.llm_providers import get_provider_credentials
+
 
 # Standard role map for OpenAI-compatible providers
 STANDARD_ROLE_MAP = {
@@ -49,8 +53,14 @@ class ProviderConfig:
     requires_role_map: bool = False  # Whether to use standard role map
     extra_kwargs: Dict[str, Any] = field(default_factory=dict)  # Additional kwargs
 
-    def get_api_key(self) -> Optional[str]:
-        """Get API key from environment."""
+    def get_api_key(self, provider_key: str = "") -> Optional[str]:
+        """Get API key: shared credential registry first, local env fallback."""
+        creds = get_provider_credentials(provider_key) if provider_key else None
+        if creds is not None and creds.requires_api_key:
+            key = creds.resolve_api_key()
+            if not key:
+                logger.warning(f"None of [{', '.join(creds.api_key_envs)}] set")
+            return key
         if self.api_key_env:
             key = os.getenv(self.api_key_env)
             if not key:
@@ -58,8 +68,11 @@ class ProviderConfig:
             return key
         return None
 
-    def get_base_url(self) -> Optional[str]:
-        """Get base URL from environment or default."""
+    def get_base_url(self, provider_key: str = "") -> Optional[str]:
+        """Get base URL: env override first, then this provider's default."""
+        creds = get_provider_credentials(provider_key) if provider_key else None
+        if creds is not None:
+            return creds.resolve_base_url(default=self.base_url)
         if self.base_url_env:
             return os.getenv(self.base_url_env, self.base_url)
         return self.base_url
@@ -148,19 +161,14 @@ def get_model(model_provider: str, model_id: str, **kwargs) -> Any:
     # Build kwargs for model instantiation
     model_kwargs = {}
 
-    # Add API key if required
-    api_key = config.get_api_key()
+    # Add API key if required (shared registry handles fallbacks such as
+    # QWEN_API_KEY / DASHSCOPE_API_KEY for the Alibaba providers)
+    api_key = config.get_api_key(provider_key)
     if api_key:
         model_kwargs["api_key"] = api_key
 
-    # Handle special case for dashscope/alibaba API key fallback
-    if provider_key in ("dashscope", "alibaba") and not api_key:
-        fallback_key = os.getenv("QWEN_API_KEY")
-        if fallback_key:
-            model_kwargs["api_key"] = fallback_key
-
     # Add base URL
-    base_url = config.get_base_url()
+    base_url = config.get_base_url(provider_key)
     if base_url:
         model_kwargs["base_url"] = base_url
 

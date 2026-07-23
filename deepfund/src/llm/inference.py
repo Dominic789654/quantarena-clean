@@ -449,10 +449,11 @@ def get_model(config: LLMConfig):
     model_config = provider.config
 
     if model_config.requires_api_key:
-        api_key = os.getenv(model_config.env_key)
+        api_key = model_config.resolve_api_key()
         if not api_key:
-            logger.error(f"API Key Error: Please make sure {model_config.env_key} is set in your .env file.")
-            raise ValueError(f"{provider} API key not found. Please set {model_config.env_key} in .env file.")
+            expected = ", ".join(model_config.credentials.api_key_envs)
+            logger.error(f"API Key Error: Please make sure one of [{expected}] is set in your .env file.")
+            raise ValueError(f"{provider} API key not found. Please set one of [{expected}] in .env file.")
 
     kwargs = {
         "model": config.model,

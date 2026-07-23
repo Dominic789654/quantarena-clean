@@ -8,6 +8,10 @@ from langchain_deepseek import ChatDeepSeek
 from langchain_ollama import ChatOllama
 from langchain_core.language_models.chat_models import BaseChatModel
 
+# Credential knowledge (API-key env vars, base URLs) is shared with the
+# deepear model factory; only the langchain model classes live here.
+from shared.config.llm_providers import ProviderCredentials, get_provider_credentials
+
 # Optional imports with fallback
 try:
     from langchain_fireworks import ChatFireworks
@@ -16,13 +20,30 @@ except ImportError:
     ChatFireworks = None
     HAS_FIREWORKS = False
 
+
 @dataclass
 class ModelConfig:
     """Configuration for a model provider"""
     model_class: Optional[Type[BaseChatModel]]
-    env_key: Optional[str] = None
+    credentials: ProviderCredentials
     base_url: Optional[str] = None
-    requires_api_key: bool = True
+
+    @property
+    def requires_api_key(self) -> bool:
+        return self.credentials.requires_api_key
+
+    @property
+    def env_key(self) -> Optional[str]:
+        return self.credentials.primary_key_env
+
+    def resolve_api_key(self) -> Optional[str]:
+        return self.credentials.resolve_api_key()
+
+
+# deepfund intentionally targets Ark's coding endpoint; deepear uses the
+# standard /api/v3 endpoint. Both honor the ARK_BASE_URL env override.
+_ARK_CODING_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding/v3"
+
 
 class Provider(str, Enum):
     """Supported LLM providers"""
@@ -33,7 +54,7 @@ class Provider(str, Enum):
     DASHSCOPE = "DashScope"
     ZHIPU = "ZhiPu"
     OLLAMA = "Ollama"
-    FIREWORKS= "Fireworks"
+    FIREWORKS = "Fireworks"
     YIZHAN = "YiZhan"
     AIHUBMIX = "AiHubMix"
     ARK = "Ark"
@@ -51,64 +72,33 @@ class Provider(str, Enum):
     @property
     def config(self) -> ModelConfig:
         """Get the configuration for this provider"""
-        PROVIDER_CONFIGS = {
-            Provider.OPENAI: ModelConfig(
-                model_class=ChatOpenAI,
-                env_key="OPENAI_API_KEY",
-            ),
-            Provider.ANTHROPIC: ModelConfig(
-                model_class=ChatAnthropic,
-                env_key="ANTHROPIC_API_KEY",
-            ),
-            Provider.DEEPSEEK: ModelConfig(
-                model_class=ChatDeepSeek,
-                env_key="DEEPSEEK_API_KEY",
-            ),
-            Provider.ALIBABA: ModelConfig(
-                model_class=ChatOpenAI,
-                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                env_key="QWEN_API_KEY",
-            ),
-            Provider.DASHSCOPE: ModelConfig(
-                model_class=ChatOpenAI,
-                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                env_key="DASHSCOPE_API_KEY",
-            ),
-            Provider.ZHIPU: ModelConfig(
-                model_class=ChatOpenAI,
-                base_url="https://open.bigmodel.cn/api/paas/v4",
-                env_key="ZHIPU_API_KEY",
-            ),
-            Provider.OLLAMA: ModelConfig(
-                model_class=ChatOllama,
-                requires_api_key=False,
-            ),
+        model_classes = {
+            Provider.OPENAI: ChatOpenAI,
+            Provider.ANTHROPIC: ChatAnthropic,
+            Provider.DEEPSEEK: ChatDeepSeek,
+            Provider.ALIBABA: ChatOpenAI,
+            Provider.DASHSCOPE: ChatOpenAI,
+            Provider.ZHIPU: ChatOpenAI,
+            Provider.OLLAMA: ChatOllama,
+            Provider.YIZHAN: ChatOpenAI,
+            Provider.AIHUBMIX: ChatOpenAI,
+            Provider.ARK: ChatOpenAI,
+            Provider.LOCAL: ChatOpenAI,
         }
-        # Add Fireworks only if available
         if HAS_FIREWORKS and ChatFireworks is not None:
-            PROVIDER_CONFIGS[Provider.FIREWORKS] = ModelConfig(
-                model_class=ChatFireworks,
-                env_key="FIREWORKS_API_KEY",
-            )
-        # Add YiZhan and AiHubMix
-        PROVIDER_CONFIGS[Provider.YIZHAN] = ModelConfig(
-            model_class=ChatOpenAI,
-            env_key="YIZHAN_API_KEY",
-            base_url="https://vip.yi-zhan.top/v1",
+            model_classes[Provider.FIREWORKS] = ChatFireworks
+
+        model_class = model_classes.get(self)
+        if model_class is None:
+            raise ValueError(f"Provider {self.value} is unavailable (missing optional dependency)")
+
+        credentials = get_provider_credentials(self.value)
+        if credentials is None:
+            raise ValueError(f"No credential registry entry for provider {self.value}")
+
+        default_base_url = _ARK_CODING_BASE_URL if self is Provider.ARK else None
+        return ModelConfig(
+            model_class=model_class,
+            credentials=credentials,
+            base_url=credentials.resolve_base_url(default=default_base_url),
         )
-        PROVIDER_CONFIGS[Provider.AIHUBMIX] = ModelConfig(
-            model_class=ChatOpenAI,
-            env_key="AIHUBMIX_API_KEY",
-            base_url="https://api.aihubmix.com/v1",
-        )
-        PROVIDER_CONFIGS[Provider.ARK] = ModelConfig(
-            model_class=ChatOpenAI,
-            env_key="ARK_API_KEY",
-            base_url="https://ark.cn-beijing.volces.com/api/coding/v3",
-        )
-        PROVIDER_CONFIGS[Provider.LOCAL] = ModelConfig(
-            model_class=ChatOpenAI,
-            env_key="LOCAL_API_KEY",
-            base_url="http://127.0.0.1:12580/tingly/openai",
-        )
-        return PROVIDER_CONFIGS[self]
