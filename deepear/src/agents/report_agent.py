@@ -19,6 +19,14 @@ from deepear.src.agents.forecast_agent import ForecastAgent
 from deepear.src.agents.report.retry import run_agent_with_retry
 from deepear.src.agents.report.chart_sanitizer import sanitize_json_chart_blocks
 from deepear.src.agents.report.structured_report import build_structured_report as _build_structured_report_impl
+from deepear.src.agents.report.citations import (
+    make_cite_key as _make_cite_key_impl,
+    build_bibliography as _build_bibliography_impl,
+    render_references_section as _render_references_section_impl,
+    inject_references as _inject_references_impl,
+    normalize_citations as _normalize_citations_impl,
+    clean_markdown as _clean_markdown_impl,
+)
 from deepear.src.prompts.report_agent import (
     get_report_planner_base_instructions,
     get_report_writer_base_instructions,
@@ -132,9 +140,15 @@ class ReportAgent:
 
     @staticmethod
     def _make_cite_key(url: str, title: str = "", source_name: str = "") -> str:
-        basis = (url or "").strip() or f"{(title or '').strip()}|{(source_name or '').strip()}"
-        digest = hashlib.sha1(basis.encode("utf-8")).hexdigest()[:8]
-        return f"SF-{digest}"
+        """Delegates to `deepear.src.agents.report.citations.make_cite_key`
+        (extract-report-agent-citation-manager). The original method touched
+        no instance/class state, so this is a pure pass-through -- kept as a
+        real staticmethod (not a bare attribute alias) so existing/future
+        monkeypatches of the name, and the class-level
+        `ReportAgent._make_cite_key(url=..., ...)` calls used by tests to
+        derive fixture cite keys, keep working.
+        """
+        return _make_cite_key_impl(url, title, source_name)
 
     def _build_bibliography(self, signals: List[Any]) -> tuple[list[Dict[str, Any]], Dict[int, list[str]]]:
         """Build stable bibliography entries and per-signal cite key mapping.
@@ -142,139 +156,50 @@ class ReportAgent:
         Returns:
             bib_entries: ordered unique entries: [{key,url,title,source,publish_time}]
             signal_to_keys: {signal_index(1-based): [key1,key2,...]}
+
+        Delegates to `deepear.src.agents.report.citations.build_bibliography`
+        (extract-report-agent-citation-manager), forwarding `self.db` as the
+        threaded `db` dependency so the internal
+        `self._build_bibliography(...)` call site keeps working unchanged.
         """
-        bib_by_key: Dict[str, Dict[str, Any]] = {}
-        signal_to_keys: Dict[int, list[str]] = {}
-
-        for sig_idx, signal in enumerate(signals, 1):
-            source_items: list[Dict[str, Any]] = []
-
-            if hasattr(signal, "sources") and getattr(signal, "sources"):
-                source_items = list(getattr(signal, "sources") or [])
-            elif isinstance(signal, dict) and signal.get("sources"):
-                # analyzed_signals are dicts; their sources are nested under the `sources` key
-                src_list = signal.get("sources")
-                if isinstance(src_list, list) and src_list:
-                    source_items = list(src_list)
-            elif isinstance(signal, dict):
-                # Treat raw signals as single-source entries
-                if signal.get("url") or signal.get("title"):
-                    source_items = [
-                        {
-                            "title": signal.get("title"),
-                            "url": signal.get("url"),
-                            "source_name": signal.get("source") or signal.get("source_name"),
-                            "publish_time": signal.get("publish_time"),
-                        }
-                    ]
-
-            if not source_items:
-                continue
-
-            for src in source_items:
-                url = (src.get("url") or "").strip()
-                title = (src.get("title") or "").strip()
-                source_name = (src.get("source_name") or src.get("source") or "").strip()
-                publish_time = (src.get("publish_time") or "").strip() if isinstance(src.get("publish_time"), str) else src.get("publish_time")
-
-                key = self._make_cite_key(url=url, title=title, source_name=source_name)
-                signal_to_keys.setdefault(sig_idx, [])
-                if key not in signal_to_keys[sig_idx]:
-                    signal_to_keys[sig_idx].append(key)
-
-                if key in bib_by_key:
-                    continue
-
-                # Prefer canonical metadata from DB when possible
-                enriched = self.db.lookup_reference_by_url(url) if url else None
-                bib_by_key[key] = {
-                    "key": key,
-                    "url": url or (enriched.get("url") if enriched else ""),
-                    "title": (enriched.get("title") if enriched else None) or title or "（无标题）",
-                    "source": (enriched.get("source") if enriched else None) or source_name or "（未知来源）",
-                    "publish_time": (enriched.get("publish_time") if enriched else None) or publish_time or "",
-                }
-
-        return list(bib_by_key.values()), signal_to_keys
+        return _build_bibliography_impl(signals, db=self.db)
 
     @staticmethod
     def _render_references_section(bib_entries: list[Dict[str, Any]], key_to_num: Dict[str, int]) -> str:
-        lines = ["## 参考文献", ""]
-        if not bib_entries:
-            lines.append("（无）")
-            return "\n".join(lines).strip() + "\n"
-
-        for entry in bib_entries:
-            key = entry.get("key")
-            num = key_to_num.get(key) if key else None
-            title = entry.get("title") or "（无标题）"
-            source = entry.get("source") or "（未知来源）"
-            url = entry.get("url") or ""
-            publish_time = entry.get("publish_time") or ""
-            suffix = ""
-            if publish_time:
-                suffix = f"，{publish_time}"
-            label = f"[{num}]" if isinstance(num, int) else "[?]"
-            if url:
-                lines.append(f"<a id=\"ref-{key}\"></a>{label} {title} ({source}{suffix}), {url}")
-            else:
-                lines.append(f"<a id=\"ref-{key}\"></a>{label} {title} ({source}{suffix})")
-
-        return "\n".join(lines).strip() + "\n"
+        """Delegates to
+        `deepear.src.agents.report.citations.render_references_section`
+        (extract-report-agent-citation-manager). The original method touched
+        no instance/class state, so this is a pure pass-through -- kept as a
+        real staticmethod (not a bare attribute alias) so existing/future
+        monkeypatches of the name keep intercepting the internal
+        `self._render_references_section(...)` call sites.
+        """
+        return _render_references_section_impl(bib_entries, key_to_num)
 
     @staticmethod
     def _inject_references(report_md: str, references_md: str) -> str:
-        # Replace existing references section, if any
-        pattern = re.compile(r"(?ms)^##\s*参考文献\s*$.*?(?=^##\s|\Z)")
-        if pattern.search(report_md or ""):
-            return pattern.sub(references_md.strip() + "\n\n", report_md).strip()
-
-        # Otherwise append at end
-        return (report_md or "").rstrip() + "\n\n" + references_md.strip() + "\n"
+        """Delegates to `deepear.src.agents.report.citations.inject_references`
+        (extract-report-agent-citation-manager). The original method touched
+        no instance/class state, so this is a pure pass-through -- kept as a
+        real staticmethod (not a bare attribute alias) so existing/future
+        monkeypatches of the name keep intercepting the internal
+        `self._inject_references(...)` call sites.
+        """
+        return _inject_references_impl(report_md, references_md)
 
     @staticmethod
     def _normalize_citations(report_md: str, signal_to_keys: Dict[int, list[str]], key_to_num: Dict[str, int]) -> str:
-        text = report_md or ""
-
-        # Convert legacy [[n]] to the first available cite key for that signal.
-        def repl_legacy(match: re.Match) -> str:
-            idx = int(match.group(1))
-            keys = signal_to_keys.get(idx) or []
-            if not keys:
-                return match.group(0)
-            key = keys[0]
-            num = key_to_num.get(key)
-            label = f"[{num}]" if isinstance(num, int) else "[?]"
-            return f"{label}(#ref-{key})"
-
-        text = re.sub(r"\[\[(\d+)\]\]", repl_legacy, text)
-
-        # Convert cite keys to numbered display while keeping stable anchor: [@KEY] -> [N](#ref-KEY)
-        def repl_key(match: re.Match) -> str:
-            key = match.group("key")
-            num = key_to_num.get(key)
-            label = f"[{num}]" if isinstance(num, int) else "[?]"
-            return f"{label}(#ref-{key})"
-
-        text = re.sub(r"\[@(?P<key>[A-Za-z0-9][A-Za-z0-9:_\-]{0,64})\](?!\()", repl_key, text)
-
-        # Convert loose cite markers like: （@SF-xxxxxxxx） / (@SF-xxxxxxxx)
-        # These sometimes appear when the model forgets the bracket form.
-        def repl_loose_key(match: re.Match) -> str:
-            lparen = match.group("lparen")
-            rparen = match.group("rparen")
-            key = match.group("key")
-            num = key_to_num.get(key)
-            label = f"[{num}]" if isinstance(num, int) else "[?]"
-            return f"{lparen}{label}(#ref-{key}){rparen}"
-
-        text = re.sub(
-            r"(?P<lparen>[\(\（])\s*@(?P<key>SF-[0-9a-fA-F]{8})\s*(?P<rparen>[\)\）])",
-            repl_loose_key,
-            text,
-        )
-
-        return text
+        """Delegates to `deepear.src.agents.report.citations.normalize_citations`
+        (extract-report-agent-citation-manager). The original method touched
+        no instance/class state, so this is a pure pass-through -- kept as a
+        real staticmethod (not a bare attribute alias) so existing/future
+        monkeypatches of the name keep intercepting the internal
+        `self._normalize_citations(...)` call sites. All three arguments
+        remain required (see
+        `openspec/changes/archive/2026-07-23-fix-report-agent-citation-normalize-args/`);
+        this move does not reintroduce the fixed two-argument call bug.
+        """
+        return _normalize_citations_impl(report_md, signal_to_keys, key_to_num)
 
     @staticmethod
     def _clean_ticker(ticker_raw: str) -> str:
@@ -772,15 +697,17 @@ class ReportAgent:
         return SimpleNamespace(content=final_report_with_charts, structured=structured_report)
 
     def _clean_markdown(self, text: str) -> str:
-        """Helper to remove markdown code fences"""
-        text = text.strip()
-        if text.startswith("```markdown"):
-            text = text[len("```markdown"):].strip()
-        elif text.startswith("```"):
-            text = text[3:].strip()
-        if text.endswith("```"):
-            text = text[:-3].strip()
-        return text
+        """Helper to remove markdown code fences
+
+        Delegates to `deepear.src.agents.report.citations.clean_markdown`
+        (extract-report-agent-citation-manager). The original method touched
+        no instance/class state either (it is called as `self._clean_markdown
+        (...)` throughout `_incremental_edit`, but never reads or writes
+        `self`) -- kept as a real bound method (not a bare attribute alias)
+        so existing/future monkeypatches of the name keep intercepting every
+        internal `self._clean_markdown(...)` call site.
+        """
+        return _clean_markdown_impl(text)
 
     def _incremental_edit(
         self,
