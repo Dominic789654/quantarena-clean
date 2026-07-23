@@ -8,7 +8,6 @@ from types import SimpleNamespace
 
 from deepear.src.utils.database_manager import DatabaseManager
 from deepear.src.utils.hybrid_search import InMemoryRAG
-from deepear.src.utils.json_utils import extract_json
 from deepear.src.utils.stock_tools import StockTools
 import re
 from deepear.src.schema.models import ClusterContext, ForecastResult
@@ -33,19 +32,18 @@ from deepear.src.agents.report.forecast_requests import (
     build_forecast_map as _build_forecast_map_impl,
 )
 from deepear.src.agents.report.chart_renderer import process_charts as _process_charts_impl
+from deepear.src.agents.report.clustering import cluster_signals as _cluster_signals_impl
 from deepear.src.prompts.report_agent import (
     get_report_planner_base_instructions,
     get_report_writer_base_instructions,
     get_report_editor_base_instructions,
     format_signal_for_report,
-    get_cluster_planner_instructions,
     get_report_planner_instructions,
     get_report_writer_instructions,
     get_report_editor_instructions,
     get_section_editor_instructions,
     get_summary_generator_instructions,
     get_final_assembly_instructions,
-    get_cluster_task,
     get_writer_task,
     get_planner_task,
     get_editor_task
@@ -289,34 +287,20 @@ class ReportAgent:
         """
         使用 Planner 将信号聚类为几个核心主题
         返回: [{"theme_title": "主题A", "signal_ids": [1, 2], "rationale": "..."}]
+
+        Delegates to `deepear.src.agents.report.clustering.cluster_signals`
+        (extract-report-agent-signal-clusterer). The original method's only
+        `self.` read was `self.planner`; per the program plan's instruction to
+        "share the exact `self.planner` instance by reference," it is
+        forwarded as the `planner` keyword argument -- the same `Agent`
+        object, not a copy or a freshly constructed one -- so the moved
+        function's `.instructions` mutation and `.run(...)` call land on
+        this instance's own `self.planner`. Kept as a real bound instance
+        method (not a bare attribute alias) so existing/future monkeypatches
+        of the name keep intercepting the internal
+        `self._cluster_signals(...)` call site inside `generate_report`.
         """
-        # 准备简要输入
-        signals_preview = ""
-        for i, s in enumerate(signals, 1):
-            title = s.title if hasattr(s, 'title') else s.get('title', '')
-            signals_preview += f"[{i}] {title}\n"
-            
-        logger.info(f"🧠 Clustering {len(signals)} signals into themes...")
-        
-        instruction = get_cluster_planner_instructions(signals_preview, user_query)
-        self.planner.instructions = [instruction]
-        
-        try:
-            response = self.planner.run(get_cluster_task(signals_preview))
-            content = response.content
-            
-            cluster_data = extract_json(content)
-            if cluster_data and "clusters" in cluster_data:
-                clusters = cluster_data["clusters"]
-                logger.info(f"✅ Created {len(clusters)} signal clusters.")
-                return clusters
-            else:
-                logger.warning("⚠️ Failed to parse cluster JSON, fallback to individual signal mode.")
-                return []
-                
-        except Exception as e:
-            logger.error(f"Signal clustering failed: {e}")
-            return []
+        return _cluster_signals_impl(signals, user_query, planner=self.planner)
 
     @staticmethod
     def build_structured_report(report_md: str, signals: List[Dict[str, Any]], clusters: List[Dict[str, Any]]) -> Dict[str, Any]:
