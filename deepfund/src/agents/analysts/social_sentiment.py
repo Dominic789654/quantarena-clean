@@ -5,6 +5,7 @@ Analyzes Reddit mention statistics (ApeWisdom) to gauge retail crowd
 attention and its 24-hour momentum for a ticker. US market only.
 """
 
+import os
 from datetime import datetime, timedelta
 from typing import Dict
 
@@ -39,9 +40,10 @@ class SocialSentimentAnalyst(BaseAnalyst):
         if market == "cn":
             raise ValueError("social_sentiment analyst supports the US market only")
 
-        # ApeWisdom has no historical API: signals always reflect *current*
-        # Reddit attention. Flag historical runs so backtests can't silently
-        # treat today's sentiment as point-in-time data.
+        # ApeWisdom's live API has no history: unless snapshot replay is on
+        # (APEWISDOM_SNAPSHOT_MODE=local_only serving captured snapshots),
+        # historical runs see *current* Reddit attention. Flag that so
+        # backtests can't silently treat it as point-in-time data.
         trading_date = state.get("trading_date")
         parsed_date = None
         if isinstance(trading_date, datetime):
@@ -51,16 +53,20 @@ class SocialSentimentAnalyst(BaseAnalyst):
                 parsed_date = datetime.strptime(trading_date[:10], "%Y-%m-%d")
             except ValueError:
                 parsed_date = None
-        if parsed_date and datetime.now() - parsed_date > timedelta(days=2):
+        replaying = os.getenv("APEWISDOM_SNAPSHOT_MODE", "").strip().lower() == "local_only"
+        if parsed_date and not replaying and datetime.now() - parsed_date > timedelta(days=2):
             logger.warning(
                 f"[{self.agent_key}] trading_date {trading_date} is historical but "
-                f"social sentiment reflects current Reddit data — lookahead in backtests"
+                f"social sentiment reflects current Reddit data — lookahead in backtests "
+                f"(enable APEWISDOM_SNAPSHOT_MODE=local_only replay to avoid this)"
             )
 
         filter_key = self.thresholds.get("filter_key", "wallstreetbets")
         top_n = int(self.thresholds.get("trending_top_n", 10))
 
-        mention = router.get_us_social_ticker_mentions(ticker, filter_key=filter_key)
+        mention = router.get_us_social_ticker_mentions(
+            ticker, filter_key=filter_key, as_of=parsed_date
+        )
         if mention is None:
             ticker_stats = (
                 f"{ticker} is not currently ranked in r/{filter_key} mentions "
@@ -69,7 +75,9 @@ class SocialSentimentAnalyst(BaseAnalyst):
         else:
             ticker_stats = mention.model_dump_json()
 
-        trending = router.get_us_social_trending(filter_key=filter_key, limit=top_n)
+        trending = router.get_us_social_trending(
+            filter_key=filter_key, limit=top_n, as_of=parsed_date
+        )
         trending_lines = [
             f"{m.rank}. {m.ticker}: {m.mentions} mentions"
             + (f" ({m.mentions_change_24h:+d} vs 24h ago)" if m.mentions_change_24h is not None else "")

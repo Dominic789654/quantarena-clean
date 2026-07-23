@@ -413,14 +413,21 @@ class Router():
         )
 
     @track_api_call(category="apewisdom")
-    def get_us_social_trending(self, filter_key="wallstreetbets", limit=None):
-        """Reddit mention ranking from ApeWisdom (source-independent)."""
-        return self._get_apewisdom_api().get_trending(filter_key=filter_key, limit=limit)
+    def get_us_social_trending(self, filter_key="wallstreetbets", limit=None, as_of=None):
+        """Reddit mention ranking from ApeWisdom (source-independent).
+
+        as_of selects the snapshot date when APEWISDOM_SNAPSHOT_MODE is on.
+        """
+        return self._get_apewisdom_api().get_trending(
+            filter_key=filter_key, limit=limit, as_of=as_of
+        )
 
     @track_api_call(category="apewisdom")
-    def get_us_social_ticker_mentions(self, ticker, filter_key="wallstreetbets"):
+    def get_us_social_ticker_mentions(self, ticker, filter_key="wallstreetbets", as_of=None):
         """One ticker's Reddit mention stats from ApeWisdom (source-independent)."""
-        return self._get_apewisdom_api().get_ticker_mentions(ticker, filter_key=filter_key)
+        return self._get_apewisdom_api().get_ticker_mentions(
+            ticker, filter_key=filter_key, as_of=as_of
+        )
 
     def get_cn_stock_news(self, ticker, trading_date, news_count):
         if self._should_use_replay_news():

@@ -57,12 +57,17 @@ def test_fetch_data_returns_stats_and_trending():
 
     data = analyst.fetch_data(_make_state(), router)
 
-    router.get_us_social_ticker_mentions.assert_called_once_with(
-        "MU", filter_key="wallstreetbets"
-    )
-    router.get_us_social_trending.assert_called_once_with(
-        filter_key="wallstreetbets", limit=10
-    )
+    router.get_us_social_ticker_mentions.assert_called_once()
+    mention_kwargs = router.get_us_social_ticker_mentions.call_args
+    assert mention_kwargs.args == ("MU",)
+    assert mention_kwargs.kwargs["filter_key"] == "wallstreetbets"
+    assert mention_kwargs.kwargs["as_of"] is not None  # trading_date threaded through
+
+    router.get_us_social_trending.assert_called_once()
+    trending_kwargs = router.get_us_social_trending.call_args.kwargs
+    assert trending_kwargs["filter_key"] == "wallstreetbets"
+    assert trending_kwargs["limit"] == 10
+    assert trending_kwargs["as_of"] is not None
     assert '"ticker":"MU"' in data["ticker_stats"].replace(" ", "")
     assert "1. MU: 474 mentions (+237 vs 24h ago)" in data["trending"]
     # Trending entry without 24h history omits the delta clause.
