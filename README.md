@@ -46,7 +46,7 @@ variable:
 | Axis | Current artifact |
 | --- | --- |
 | Markets | China A-share and U.S. equities |
-| Universe | 40 matched tickers across two 20-name windows |
+| Universe | 40 matched tickers across two 20-name windows (`deepfund/src/config/ashare_experiment_universe.yaml`, `us_experiment_universe.yaml`) |
 | Horizon | 226 total trading days |
 | Policies | Fundamental Value, Macro Tactical, Behavioral Momentum, Low-Volatility, Equal-Weight |
 | Diagnostics | Return, drawdown, volatility, cash, turnover, holding period, trade count, composition |

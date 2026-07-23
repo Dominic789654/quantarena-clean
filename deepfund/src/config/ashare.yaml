@@ -17,7 +17,7 @@ workflow_analysts:
 # LLM model settings, refer to llm/inference.py: LLMConfig
 llm:
   provider: "DeepSeek"
-  model: "deepseek-chat"
+  model: "deepseek-v4-flash"
 
 # Data source settings for A-shares
 api_source:

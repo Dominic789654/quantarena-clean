@@ -1,0 +1,111 @@
+# U.S. experiment universe for paper-style backtests, matched to the
+# A-share 5x4 style matrix in ashare_experiment_universe.yaml
+# (same sectors, same large/mid x value/growth buckets).
+exp_name: "us_experiment_universe"
+personality: "balanced"
+market: "us"
+cashflow: 100000
+
+# Tickers are derived from experiment_universe when not provided explicitly.
+experiment_universe:
+  name: "us_5x4_style_matrix"
+  description: "Five-sector U.S. universe with large/mid and value/growth buckets, matched to the A-share matrix."
+  selection_rules:
+    exclude_micro_caps: true
+    min_median_daily_turnover_usd_mn: 100
+    note: "Use liquid names to reduce microstructure noise in agent evaluations."
+  sectors:
+    - name: financials
+      thesis: "Rate-sensitive defensive exposure"
+      stocks:
+        - ticker: "JPM"
+          label: "JPMorgan Chase"
+          bucket: "large_value"
+        - ticker: "GS"
+          label: "Goldman Sachs"
+          bucket: "large_growth"
+        - ticker: "PNC"
+          label: "PNC Financial Services"
+          bucket: "mid_value"
+        - ticker: "IBKR"
+          label: "Interactive Brokers"
+          bucket: "mid_growth"
+    - name: consumer
+      thesis: "Domestic demand and pricing power"
+      stocks:
+        - ticker: "KO"
+          label: "Coca-Cola"
+          bucket: "large_value"
+        - ticker: "AMZN"
+          label: "Amazon"
+          bucket: "large_growth"
+        - ticker: "KHC"
+          label: "Kraft Heinz"
+          bucket: "mid_value"
+        - ticker: "SBUX"
+          label: "Starbucks"
+          bucket: "mid_growth"
+    - name: technology
+      thesis: "Innovation, capex cycles, and high-beta growth"
+      stocks:
+        - ticker: "CSCO"
+          label: "Cisco Systems"
+          bucket: "large_value"
+        - ticker: "MSFT"
+          label: "Microsoft"
+          bucket: "large_growth"
+        - ticker: "HPQ"
+          label: "HP Inc."
+          bucket: "mid_value"
+        - ticker: "PANW"
+          label: "Palo Alto Networks"
+          bucket: "mid_growth"
+    - name: healthcare
+      thesis: "Independent product and policy cycle"
+      stocks:
+        - ticker: "JNJ"
+          label: "Johnson & Johnson"
+          bucket: "large_value"
+        - ticker: "LLY"
+          label: "Eli Lilly"
+          bucket: "large_growth"
+        - ticker: "BAX"
+          label: "Baxter International"
+          bucket: "mid_value"
+        - ticker: "VRTX"
+          label: "Vertex Pharmaceuticals"
+          bucket: "mid_growth"
+    - name: industrials
+      thesis: "Macro and capex sensitivity"
+      stocks:
+        - ticker: "HON"
+          label: "Honeywell"
+          bucket: "large_value"
+        - ticker: "CAT"
+          label: "Caterpillar"
+          bucket: "large_growth"
+        - ticker: "EMR"
+          label: "Emerson Electric"
+          bucket: "mid_value"
+        - ticker: "GE"
+          label: "GE Aerospace"
+          bucket: "mid_growth"
+
+# deepear_intelligence is CN-market-specific; insider covers the U.S. side.
+workflow_analysts:
+  - fundamental
+  - technical
+  - company_news
+  - insider
+
+llm:
+  provider: "DeepSeek"
+  model: "deepseek-v4-flash"
+
+api_source:
+  default: "fmp"
+  us_source: "fmp"
+
+trading:
+  market: "US"
+  timezone: "America/New_York"

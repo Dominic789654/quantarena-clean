@@ -17,7 +17,7 @@ workflow_analysts:
 # LLM model settings
 llm:
   provider: "DeepSeek"
-  model: "deepseek-chat"
+  model: "deepseek-v4-flash"
 
 # Data source settings for US market
 api_source:

@@ -42,7 +42,7 @@ class SentimentTools:
         # Initialize LLM - use unified model config from environment
         try:
             provider = model_provider or os.getenv("REASONING_MODEL_PROVIDER", "deepseek")
-            m_id = model_id or os.getenv("REASONING_MODEL_ID", "deepseek-chat")
+            m_id = model_id or os.getenv("REASONING_MODEL_ID", "deepseek-v4-flash")
             self.llm_model = get_model(provider, m_id)
             logger.info(f"✅ Sentiment LLM initialized: {provider}/{m_id}")
         except Exception as e:
