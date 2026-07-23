@@ -94,3 +94,25 @@ def test_deepear_failure_continues_when_continue_on_error(monkeypatch):
 
     assert exit_code == 1
     assert calls == ["deepear", "deepfund"]
+
+
+def test_validate_environment_patch_propagates_to_deepear_and_deepfund(monkeypatch):
+    """Regression for the Phase 2 review's HIGH finding: patching
+    run._validate_environment must still gate run_deepear/run_deepfund
+    after their extraction into runner/modes/ (shim-routed callee)."""
+    import argparse
+
+    import run
+
+    calls = []
+
+    def fake_validator(mode=None, **kwargs):
+        calls.append(mode)
+        return False  # gate closed -> handlers must return 1 immediately
+
+    monkeypatch.setattr("run._validate_environment", fake_validator)
+
+    args = argparse.Namespace()
+    assert run.run_deepear(args) == 1
+    assert run.run_deepfund(args) == 1
+    assert calls == ["deepear", "deepfund"]
