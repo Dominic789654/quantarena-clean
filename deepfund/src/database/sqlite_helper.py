@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from graph.schema import Decision, AnalystSignal
 from database.interface import BaseDB
 from database.sqlite_setup import get_db_path
+from shared.db import configure_sqlite_connection
 from util.logger import logger
 
 class SQLiteDB(BaseDB):
@@ -31,10 +32,7 @@ class SQLiteDB(BaseDB):
         """Get a database connection with row factory."""
         conn = sqlite3.connect(self.db_path, timeout=self.CONNECT_TIMEOUT_SECONDS)
         conn.row_factory = sqlite3.Row # access columns by name
-        conn.execute(f"PRAGMA busy_timeout = {self.BUSY_TIMEOUT_MS}")
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
-        return conn
+        return configure_sqlite_connection(conn, busy_timeout_ms=self.BUSY_TIMEOUT_MS)
 
 
     def get_config(self, config_id: str) -> Optional[Dict]:
