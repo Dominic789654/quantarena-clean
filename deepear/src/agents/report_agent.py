@@ -27,6 +27,14 @@ from deepear.src.agents.report.citations import (
     normalize_citations as _normalize_citations_impl,
     clean_markdown as _clean_markdown_impl,
 )
+from deepear.src.agents.report.ticker_utils import (
+    clean_ticker as _clean_ticker_impl,
+    signal_mentions_ticker as _signal_mentions_ticker_impl,
+)
+from deepear.src.agents.report.forecast_requests import (
+    extract_forecast_requests as _extract_forecast_requests_impl,
+    build_forecast_map as _build_forecast_map_impl,
+)
 from deepear.src.prompts.report_agent import (
     get_report_planner_base_instructions,
     get_report_writer_base_instructions,
@@ -203,232 +211,68 @@ class ReportAgent:
 
     @staticmethod
     def _clean_ticker(ticker_raw: str) -> str:
-        t = (ticker_raw or "").strip()
-        if not t:
-            return ""
-        if "," in t:
-            t = t.split(",")[0].strip()
-        if "." in t:
-            t = t.split(".")[0].strip()
-        digits = "".join([c for c in t if c.isdigit()])
-        return digits or t
+        """Delegates to `deepear.src.agents.report.ticker_utils.clean_ticker`
+        (extract-report-agent-forecast-and-ticker-coordinator). The original
+        method touched no instance/class state, so this is a pure
+        pass-through -- kept as a real staticmethod (not a bare attribute
+        alias) so existing/future monkeypatches of the name keep
+        intercepting the internal `self._clean_ticker(...)` call sites.
+        """
+        return _clean_ticker_impl(ticker_raw)
 
     @classmethod
     def _signal_mentions_ticker(cls, signal: Any, ticker_digits: str) -> bool:
-        if not ticker_digits:
-            return False
-
-        def norm(s: str) -> str:
-            return cls._clean_ticker(s)
-
-        try:
-            # Prefer structured impact_tickers if present
-            impact = getattr(signal, 'impact_tickers', None) if not isinstance(signal, dict) else signal.get('impact_tickers')
-            if isinstance(impact, list):
-                for item in impact:
-                    if not isinstance(item, dict):
-                        continue
-                    t = item.get('ticker') or item.get('code') or item.get('symbol')
-                    if t and norm(str(t)) == ticker_digits:
-                        return True
-
-            # Fallback to text search
-            title_text = getattr(signal, 'title', '') if not isinstance(signal, dict) else signal.get('title', '')
-            summary_text = getattr(signal, 'summary', '') if not isinstance(signal, dict) else signal.get('summary', '')
-            analysis_text = getattr(signal, 'analysis', '') if not isinstance(signal, dict) else signal.get('analysis', '')
-            combined = f"{title_text} {summary_text} {analysis_text}"
-            return ticker_digits in combined
-        except Exception:
-            return False
+        """Delegates to
+        `deepear.src.agents.report.ticker_utils.signal_mentions_ticker`
+        (extract-report-agent-forecast-and-ticker-coordinator). The
+        original classmethod's only use of `cls` was its nested `norm`
+        closure calling `cls._clean_ticker(...)`; the module function needs
+        no `cls` at all (it calls `clean_ticker` directly), but this
+        delegator stays a `@classmethod` -- not downgraded to a
+        `@staticmethod` -- to preserve its original binding kind so any
+        future subclass override or `cls`-aware monkeypatch keeps working.
+        """
+        return _signal_mentions_ticker_impl(signal, ticker_digits)
 
     def _extract_forecast_requests(self, text: str, context_window_chars: int = 1200) -> List[Dict[str, Any]]:
         """Extract forecast requests from markdown content.
 
         Returns list of dicts: {ticker, pred_len, title, context_snippet}
+
+        Delegates to
+        `deepear.src.agents.report.forecast_requests.extract_forecast_requests`
+        (extract-report-agent-forecast-and-ticker-coordinator). The
+        original method's only `self.` read was `self._clean_ticker(...)`,
+        which became a direct in-module call to `clean_ticker` once both
+        functions moved into leaf modules -- nothing is threaded here.
+        Kept as a real bound instance method (not a bare attribute alias)
+        so existing/future monkeypatches of the name keep intercepting the
+        internal `self._extract_forecast_requests(...)` call site inside
+        `_build_forecast_map`.
         """
-        if not text:
-            return []
-
-        pattern = re.compile(r'```json-chart\s*(\{.*?\})\s*```', re.DOTALL)
-        requests: List[Dict[str, Any]] = []
-
-        for match in pattern.finditer(text):
-            json_str = match.group(1).strip()
-            json_str = (
-                json_str.replace("\u201c", '"')
-                .replace("\u201d", '"')
-                .replace("\u2018", "'")
-                .replace("\u2019", "'")
-                .replace("“", '"')
-                .replace("”", '"')
-                .replace("‘", "'")
-                .replace("’", "'")
-            )
-            cfg = extract_json(json_str)
-            if not cfg:
-                continue
-            if cfg.get('type') != 'forecast':
-                continue
-
-            ticker_raw = str(cfg.get('ticker', '')).strip()
-            ticker = self._clean_ticker(ticker_raw)
-            if not (ticker.isdigit() and len(ticker) in (5, 6)):
-                continue
-
-            try:
-                pred_len = int(cfg.get('pred_len', 5))
-            except Exception:
-                pred_len = 5
-            pred_len = max(1, min(pred_len, 20))
-
-            title = str(cfg.get('title') or f"{ticker_raw} 预测").strip()
-
-            # Prefer writer-provided final attribution over raw surrounding snippet.
-            # This supports the workflow: multi-scenario discussion in正文 -> final chosen scenario -> render ONE forecast chart.
-            structured_lines: List[str] = []
-            selected_scenario = cfg.get('selected_scenario') or cfg.get('scenario') or cfg.get('case')
-            selection_reason = cfg.get('selection_reason') or cfg.get('case_reason') or cfg.get('reason')
-            scenarios = cfg.get('scenarios')
-
-            if selected_scenario:
-                structured_lines.append(f"- 最可能情景: {str(selected_scenario).strip()}")
-            if selection_reason:
-                structured_lines.append(f"- 归因: {str(selection_reason).strip()}")
-            if isinstance(scenarios, list) and scenarios:
-                structured_lines.append("- 备选情景:")
-                for item in scenarios[:6]:
-                    if not isinstance(item, dict):
-                        continue
-                    name = str(item.get('name', '')).strip()
-                    desc = str(item.get('description', '')).strip()
-                    prob = item.get('probability', None)
-                    prob_str = ""
-                    try:
-                        if prob is not None:
-                            prob_str = f" (p={float(prob):.2f})"
-                    except Exception:
-                        prob_str = ""
-                    line = "  - " + (name or "（未命名）")
-                    if desc:
-                        line += f": {desc}"
-                    line += prob_str
-                    structured_lines.append(line)
-
-            structured_context = ""
-            if structured_lines:
-                structured_context = "【最终归因/情景选择（作者在 forecast 块中给定）】\n" + "\n".join(structured_lines)
-
-            start = max(0, match.start() - context_window_chars)
-            end = min(len(text), match.end() + context_window_chars)
-            snippet = text[start:end]
-            # remove the code block itself from the snippet to reduce noise
-            snippet = snippet.replace(match.group(0), "").strip()
-            # remove any other json-chart blocks to avoid polluting forecast context
-            snippet = re.sub(r'```json-chart[\s\S]*?```', '', snippet).strip()
-
-            # If structured attribution exists, use it as the primary snippet; keep raw snippet as fallback.
-            context_snippet = structured_context or snippet
-            if len(context_snippet) > 3500:
-                context_snippet = context_snippet[:3500] + "\n\n（上下文过长已截断）"
-
-            requests.append({
-                'ticker': ticker,
-                'ticker_raw': ticker_raw,
-                'pred_len': pred_len,
-                'title': title,
-                'context_snippet': context_snippet,
-            })
-
-        return requests
+        return _extract_forecast_requests_impl(text, context_window_chars)
 
     def _build_forecast_map(self, report_text: str, signals: Optional[List[Any]] = None) -> Dict[tuple, ForecastResult]:
-        """Generate forecasts once per unique (ticker, pred_len) to ensure consistency across the report."""
-        reqs = self._extract_forecast_requests(report_text)
-        if not reqs:
-            return {}
+        """Generate forecasts once per unique (ticker, pred_len) to ensure consistency across the report.
 
-        # Allowlist: only generate forecasts for tickers that are backed by structured signals.
-        allowed_tickers: Optional[set[str]] = None
-        if signals:
-            allowed_tickers = set()
-            for s in signals:
-                impact = getattr(s, 'impact_tickers', None) if not isinstance(s, dict) else s.get('impact_tickers')
-                if not isinstance(impact, list):
-                    continue
-                for item in impact:
-                    if not isinstance(item, dict):
-                        continue
-                    t = item.get('ticker') or item.get('code') or item.get('symbol')
-                    tt = self._clean_ticker(str(t or ""))
-                    if tt and tt.isdigit() and len(tt) in (5, 6):
-                        allowed_tickers.add(tt)
-            if not allowed_tickers:
-                allowed_tickers = None
-
-        # group by key, merge context
-        grouped: Dict[tuple, Dict[str, Any]] = {}
-        for r in reqs:
-            key = (r['ticker'], int(r['pred_len']))
-            g = grouped.get(key)
-            if not g:
-                grouped[key] = {
-                    'ticker': r['ticker'],
-                    'pred_len': int(r['pred_len']),
-                    'titles': {r['title']},
-                    'snippets': [r.get('context_snippet', '')],
-                }
-            else:
-                g['titles'].add(r['title'])
-                sn = r.get('context_snippet', '')
-                if sn and sn not in g['snippets']:
-                    g['snippets'].append(sn)
-
-        logger.info(f"🔮 Forecast requests: total={len(reqs)}, unique={len(grouped)}")
-
-        forecasts: Dict[tuple, ForecastResult] = {}
-        for key, g in grouped.items():
-            ticker, pred_len = key
-
-            if allowed_tickers is not None and str(ticker) not in allowed_tickers:
-                logger.info(f"ℹ️ Skip forecast for {ticker}: not in validated impact_tickers")
-                continue
-
-            related_signals: List[Any] = []
-            if signals:
-                for s in signals:
-                    if self._signal_mentions_ticker(s, str(ticker)):
-                        related_signals.append(s)
-
-            # If we have signals context, require at least one related signal for attribution.
-            if signals and not related_signals:
-                logger.info(f"ℹ️ Skip forecast for {ticker}: no attributable signals")
-                continue
-
-            # merge context snippets (cap size)
-            merged_snippet = "\n\n---\n\n".join([s for s in g['snippets'] if s])
-            if len(merged_snippet) > 3500:
-                merged_snippet = merged_snippet[:3500] + "\n\n（上下文过长已截断）"
-
-            extra_context = ""
-            if merged_snippet:
-                extra_context = (
-                    "【报告写作上下文（来自章节正文，可能包含主观判断）】\n"
-                    + merged_snippet
-                )
-
-            try:
-                fc = self._get_forecast_agent().generate_forecast(
-                    str(ticker),
-                    related_signals,
-                    pred_len=int(pred_len),
-                    extra_context=extra_context
-                )
-                if fc:
-                    forecasts[key] = fc
-            except Exception as e:
-                logger.warning(f"⚠️ Forecast generation failed for {ticker} pred_len={pred_len}: {e}")
-
-        return forecasts
+        Delegates to
+        `deepear.src.agents.report.forecast_requests.build_forecast_map`
+        (extract-report-agent-forecast-and-ticker-coordinator). Of the
+        original method's four `self.` reads, three
+        (`self._extract_forecast_requests`, `self._clean_ticker`,
+        `self._signal_mentions_ticker`) became direct in-module calls since
+        their callees moved into leaf modules alongside this one. The
+        fourth, `self._get_forecast_agent()` -- the lazy, per-instance
+        Kronos/`ForecastAgent` cache -- is threaded through as the required
+        keyword-only `get_forecast_agent` callable per the program plan's
+        explicit "inject the lazy `_get_forecast_agent` callable"
+        instruction; `_get_forecast_agent` itself stays on this class
+        unchanged. Kept as a real bound instance method (not a bare
+        attribute alias) so existing/future monkeypatches of the name keep
+        intercepting the internal `self._build_forecast_map(...)` call site
+        inside `generate_report`.
+        """
+        return _build_forecast_map_impl(report_text, signals, get_forecast_agent=self._get_forecast_agent)
 
     @staticmethod
     def _sanitize_json_chart_blocks(text: str) -> str:
