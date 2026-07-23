@@ -15,57 +15,7 @@ from typing import Optional, Dict, Any, List
 import yaml
 
 # Fix Tushare's tk.csv issue BEFORE any other imports!
-def _fix_tushare_token_file() -> None:
-    """
-    Fix the tushare token file issue before importing anything else.
-    
-    Checks file permissions before attempting to remove corrupted token file.
-    Silently continues if file cannot be removed (non-critical error).
-    """
-    import warnings
-    
-    tk_csv_path = os.path.expanduser("~/tk.csv")
-    
-    # Check if file exists
-    if not os.path.exists(tk_csv_path):
-        return
-    
-    # Check if we have write permission before attempting removal
-    if not os.access(tk_csv_path, os.W_OK):
-        warnings.warn(
-            f"Cannot fix Tushare token file (permission denied): {tk_csv_path}. "
-            f"You may need to remove it manually if it's corrupted.",
-            RuntimeWarning,
-            stacklevel=2
-        )
-        return
-    
-    try:
-        # Try to validate file content
-        try:
-            import pandas as pd
-            df = pd.read_csv(tk_csv_path)
-            if df.empty or 'token' not in df.columns:
-                # File is corrupted, remove it
-                os.remove(tk_csv_path)
-        except Exception:
-            # Cannot read file (corrupted or locked), try to remove anyway
-            os.remove(tk_csv_path)
-            
-    except PermissionError:
-        # Permission denied during removal (race condition or changed permissions)
-        warnings.warn(
-            f"Permission denied when removing Tushare token file: {tk_csv_path}",
-            RuntimeWarning,
-            stacklevel=2
-        )
-    except OSError as e:
-        # Other OS-level errors (file locked, etc.)
-        warnings.warn(
-            f"Could not remove Tushare token file {tk_csv_path}: {e}",
-            RuntimeWarning,
-            stacklevel=2
-        )
+from runner.bootstrap import _fix_tushare_token_file, load_dotenv_file  # noqa: F401
 
 # Apply the fix FIRST, before any other imports
 _fix_tushare_token_file()
@@ -570,10 +520,8 @@ def run_deepfund(args: argparse.Namespace) -> int:
         spec.loader.exec_module(deepfund_main_module)
         deepfund_main = deepfund_main_module.main
 
-        from dotenv import load_dotenv
-
         # Load environment
-        load_dotenv(PROJECT_ROOT / ".env")
+        load_dotenv_file(PROJECT_ROOT / ".env")
 
         # Determine config file
         config_file = args.config
