@@ -127,10 +127,15 @@ class ApeWisdomAPI:
                 return payload
 
         cache_key = f"{filter_key}:{page}"
+        saving = mode in {"prefer_local", "refresh"}
         now = time.time()
         with self._cache_lock:
             hit = self._cache.get(cache_key)
             if hit and now - hit[0] < self.CACHE_TTL:
+                # A warm TTL cache must not skip daily capture: backfill
+                # today's snapshot if it does not exist yet.
+                if saving and not self.snapshots.has_for_day(snapshot_key):
+                    self.snapshots.save(snapshot_key, hit[1])
                 return hit[1]
 
         data = self._request_json(f"{self.BASE_URL}/filter/{filter_key}/page/{page}")
@@ -138,7 +143,7 @@ class ApeWisdomAPI:
             while len(self._cache) >= self.MAX_CACHE_ENTRIES:
                 self._cache.pop(next(iter(self._cache)))
             self._cache[cache_key] = (now, data)
-        if mode in {"prefer_local", "refresh"}:
+        if saving:
             self.snapshots.save(snapshot_key, data)
         return data
 

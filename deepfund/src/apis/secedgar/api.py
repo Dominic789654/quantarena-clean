@@ -120,6 +120,8 @@ class SECEdgarAPI:
     def _cached_json(self, cache_key: str, ttl: float, url: str,
                      params: Optional[Dict[str, Any]] = None,
                      as_of: Optional[datetime] = None) -> Any:
+        # Key families ("submissions:{cik}", "form4:{sym}:{start}:{end}") are
+        # structurally disjoint, so this simple mapping cannot collide.
         snapshot_key = cache_key.replace(":", "/")
         mode = self.snapshots.mode
 
@@ -137,10 +139,15 @@ class SECEdgarAPI:
             if payload is not None:
                 return payload
 
+        saving = mode in {"prefer_local", "refresh"}
         now = time.time()
         with self._cache_lock:
             hit = self._cache.get(cache_key)
             if hit and now - hit[0] < ttl:
+                # A warm TTL cache (24h for submissions) must not skip daily
+                # capture: backfill today's snapshot if it does not exist yet.
+                if saving and not self.snapshots.has_for_day(snapshot_key):
+                    self.snapshots.save(snapshot_key, hit[1])
                 return hit[1]
 
         data = self._request_json(url, params=params)
@@ -148,7 +155,7 @@ class SECEdgarAPI:
             while len(self._cache) >= self.MAX_CACHE_ENTRIES:
                 self._cache.pop(next(iter(self._cache)))
             self._cache[cache_key] = (now, data)
-        if mode in {"prefer_local", "refresh"}:
+        if saving:
             self.snapshots.save(snapshot_key, data)
         return data
 

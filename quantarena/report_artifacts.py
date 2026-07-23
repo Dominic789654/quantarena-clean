@@ -32,6 +32,7 @@ class RunReportArtifacts:
     equity_curve: list[dict[str, str]]
     trades: list[dict[str, str]]
     broker_audit: list[dict[str, Any]] = field(default_factory=list)
+    run_manifest: dict[str, Any] = field(default_factory=dict)
     errors: list[ReportArtifactLoadError] = field(default_factory=list)
 
     @property
@@ -96,6 +97,7 @@ def load_run_report_artifacts(root: str | Path) -> RunReportArtifacts:
     equity_curve = _load_csv_rows(report_root / "equity_curve.csv", errors)
     trades = _load_csv_rows(report_root / "trades.csv", errors)
     broker_audit = _load_optional_jsonl_rows(report_root / "broker_audit.jsonl", errors)
+    run_manifest = _load_optional_json_object(report_root / "run_manifest.json", errors)
     return RunReportArtifacts(
         root=report_root,
         metrics_payload=metrics_payload,
@@ -103,8 +105,28 @@ def load_run_report_artifacts(root: str | Path) -> RunReportArtifacts:
         equity_curve=equity_curve,
         trades=trades,
         broker_audit=broker_audit,
+        run_manifest=run_manifest,
         errors=errors,
     )
+
+
+def _load_optional_json_object(
+    path: Path,
+    errors: list[ReportArtifactLoadError],
+) -> dict[str, Any]:
+    """Load an optional JSON-object artifact; absent files are not errors
+    (runs generated before the artifact existed remain valid)."""
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        errors.append(ReportArtifactLoadError(path=path, message=f"unreadable artifact: {exc}"))
+        return {}
+    if not isinstance(payload, dict):
+        errors.append(ReportArtifactLoadError(path=path, message="artifact must be a JSON object"))
+        return {}
+    return payload
 
 
 def _load_metrics_payload(

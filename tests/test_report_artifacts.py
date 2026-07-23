@@ -82,6 +82,41 @@ def test_load_run_report_artifacts_reads_optional_broker_audit_jsonl(tmp_path: P
     assert artifacts.summary()["broker_audit_count"] == 2
 
 
+def test_load_run_report_artifacts_reads_optional_run_manifest(tmp_path: Path):
+    (tmp_path / "metrics.json").write_text(
+        json.dumps({"run_id": "manifest-fixture", "market": "us", "metrics": {"total_return": 1.0}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "equity_curve.csv").write_text("date,total_value\n2026-01-02,1000\n", encoding="utf-8")
+    (tmp_path / "trades.csv").write_text("date,ticker,action\n2026-01-02,AAA,BUY\n", encoding="utf-8")
+    (tmp_path / "run_manifest.json").write_text(
+        json.dumps({"manifest_version": 1, "run_id": "manifest-fixture",
+                    "llm_usage": {"calls": 3, "estimated_cost_cny": 0.01}}),
+        encoding="utf-8",
+    )
+
+    artifacts = load_run_report_artifacts(tmp_path)
+
+    assert artifacts.ok is True
+    assert artifacts.run_manifest["manifest_version"] == 1
+    assert artifacts.run_manifest["llm_usage"]["calls"] == 3
+
+
+def test_load_run_report_artifacts_tolerates_missing_run_manifest(tmp_path: Path):
+    """Runs generated before the manifest existed must stay valid."""
+    (tmp_path / "metrics.json").write_text(
+        json.dumps({"run_id": "old-run", "market": "us", "metrics": {"total_return": 1.0}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "equity_curve.csv").write_text("date,total_value\n2026-01-02,1000\n", encoding="utf-8")
+    (tmp_path / "trades.csv").write_text("date,ticker,action\n2026-01-02,AAA,BUY\n", encoding="utf-8")
+
+    artifacts = load_run_report_artifacts(tmp_path)
+
+    assert artifacts.ok is True
+    assert artifacts.run_manifest == {}
+
+
 def test_load_run_report_artifacts_reports_invalid_metrics_json(tmp_path: Path):
     (tmp_path / "metrics.json").write_text("{bad json", encoding="utf-8")
     (tmp_path / "equity_curve.csv").write_text("date,total_value\n", encoding="utf-8")
