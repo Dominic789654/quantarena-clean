@@ -42,8 +42,8 @@ experiment_universe:
         - ticker: "600887"
           label: "Yili"
           bucket: "mid_value"
-        - ticker: "002311"
-          label: "Haitian Foods"
+        - ticker: "603288"
+          label: "Haitian Flavouring"
           bucket: "mid_growth"
     - name: technology
       thesis: "Innovation, policy support, and high-beta growth"
@@ -58,7 +58,7 @@ experiment_universe:
           label: "GigaDevice"
           bucket: "mid_value"
         - ticker: "688111"
-          label: "BE Semiconductor-style proxy"
+          label: "Kingsoft Office"
           bucket: "mid_growth"
     - name: healthcare
       thesis: "Independent product and policy cycle"
@@ -70,7 +70,7 @@ experiment_universe:
           label: "Hengrui Medicine"
           bucket: "large_growth"
         - ticker: "300347"
-          label: "TaiGe"
+          label: "Tigermed"
           bucket: "mid_value"
         - ticker: "300122"
           label: "Zhifei Bio"
@@ -88,7 +88,7 @@ experiment_universe:
           label: "Hengli Hydraulics"
           bucket: "mid_value"
         - ticker: "002353"
-          label: "Jiecang Drive"
+          label: "Jereh Group"
           bucket: "mid_growth"
 
 workflow_analysts:
@@ -99,7 +99,7 @@ workflow_analysts:
 
 llm:
   provider: "DeepSeek"
-  model: "deepseek-chat"
+  model: "deepseek-v4-flash"
 
 api_source:
   default: "tushare"

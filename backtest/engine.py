@@ -180,7 +180,7 @@ class BacktestEngine(BaseBacktestEngine):
         llm_provider = str(llm_cfg.get("provider", "")).strip() or None
         llm_model = str(llm_cfg.get("model", "")).strip() or None
         self.llm_provider = llm_provider or os.getenv("REASONING_MODEL_PROVIDER", "DeepSeek")
-        self.llm_model = llm_model or os.getenv("REASONING_MODEL_ID", "deepseek-chat")
+        self.llm_model = llm_model or os.getenv("REASONING_MODEL_ID", "deepseek-v4-flash")
         if use_llm:
             try:
                 self.workflow_adapter = create_workflow_adapter(

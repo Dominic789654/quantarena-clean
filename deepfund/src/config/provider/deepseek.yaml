@@ -16,4 +16,4 @@ workflow_analysts:
 # LLM model settings, refer to llm/inference.py: LLMConfig
 llm:
   provider: "DeepSeek" 
-  model: "deepseek-chat" # DeepSeek-V3
+  model: "deepseek-v4-flash"

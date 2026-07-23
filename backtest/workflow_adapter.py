@@ -401,7 +401,7 @@ class BacktestWorkflowAdapter:
         self.personality = self._normalize_personality(personality)
         # Read from env vars or use defaults
         self.llm_provider = llm_provider or os.getenv("REASONING_MODEL_PROVIDER", "DeepSeek")
-        self.llm_model = llm_model or os.getenv("REASONING_MODEL_ID", "deepseek-chat")
+        self.llm_model = llm_model or os.getenv("REASONING_MODEL_ID", "deepseek-v4-flash")
         self.api_source = self._build_api_source_config(api_source_config)
         self.shared_analyst_cache = None
         phase1_cache_root = None
