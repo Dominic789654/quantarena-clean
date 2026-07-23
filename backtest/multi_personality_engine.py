@@ -124,11 +124,9 @@ class SharedDataCache:
         # 使用与 BaseBacktestEngine 相同的 DataPrefetcher
         self.prefetcher = DataPrefetcher(db_path=db_path, market=market)
         self._kline_cache: Dict[str, Dict] = {}
-        self._deepear_cache: Dict[str, Dict] = {}
         self._trading_days: List[str] = []
         self._stats = {
             "kline_fetch_time": 0.0,
-            "deepear_fetch_time": 0.0,
             "cache_hits": 0
         }
 
@@ -150,12 +148,6 @@ class SharedDataCache:
             start_date=self.start_date,
             end_date=self.end_date
         )
-
-        # 3. 预取 DeepEar 数据（如果需要）
-        if "deepear_intelligence" in self.analysts:
-            deepear_start = time.time()
-            self._prefetch_deepear_data()
-            self._stats["deepear_fetch_time"] = time.time() - deepear_start
 
         total_time = time.time() - start_time
         self._stats["total_time"] = total_time
@@ -197,34 +189,6 @@ class SharedDataCache:
 
         logger.info(f"K-line cache: {len(self._kline_cache)} tickers loaded")
 
-    def _prefetch_deepear_data(self):
-        """预取 DeepEar 分析数据"""
-        logger.info("Prefetching DeepEar intelligence...")
-
-        try:
-            # 导入 DeepEar 相关模块
-            from deepear.src.utils.database_manager import DatabaseManager
-
-            db_manager = DatabaseManager(db_path=self.db_path)
-
-            for date in self._trading_days:
-                for ticker in self.tickers:
-                    try:
-                        # 尝试从 DeepEar 数据库获取已分析的信号
-                        signals = db_manager.get_signals_by_date_and_stock(
-                            date=date,
-                            stock_code=ticker
-                        )
-                        if signals:
-                            key = f"{ticker}_{date}"
-                            self._deepear_cache[key] = signals
-                    except Exception as e:
-                        logger.debug(f"No DeepEar cache for {ticker} on {date}: {e}")
-
-            logger.info(f"DeepEar cache: {len(self._deepear_cache)} entries")
-
-        except Exception as e:
-            logger.warning(f"Failed to prefetch DeepEar data: {e}")
 
     def get_prices_for_date(self, date: str) -> Dict[str, float]:
         """获取某天的所有股票价格"""
@@ -239,17 +203,12 @@ class SharedDataCache:
         """获取某只股票的 K-line 数据"""
         return self._kline_cache.get(ticker)
 
-    def get_deepear_for_ticker_date(self, ticker: str, date: str) -> Optional[Dict]:
-        """获取 DeepEar 分析结果"""
-        key = f"{ticker}_{date}"
-        return self._deepear_cache.get(key)
-
     def get_trading_days(self) -> List[str]:
         """获取交易日列表"""
         return self._trading_days.copy()
 
     def _format_stats(self) -> str:
-        return f"K-line: {self._stats['kline_fetch_time']:.2f}s, DeepEar: {self._stats['deepear_fetch_time']:.2f}s"
+        return f"K-line: {self._stats['kline_fetch_time']:.2f}s"
 
     def close(self):
         """关闭资源"""
@@ -1135,7 +1094,6 @@ class MultiPersonalityBacktest(BaseBacktestEngine):
             "\n---\n\n",
             "## 共享数据缓存统计\n",
             f"- K-line 数据获取时间: {shared_stats.get('kline_fetch_time', 0):.2f}s\n",
-            f"- DeepEar 数据获取时间: {shared_stats.get('deepear_fetch_time', 0):.2f}s\n",
             f"- 数据缓存总时间: {shared_stats.get('total_time', 0):.2f}s\n",
             f"- shared phase1 artifact cache 命中: {shared_stats.get('shared_phase1_artifact_cache_hits', 0)}\n",
             f"- shared phase1 artifact cache 未命中: {shared_stats.get('shared_phase1_artifact_cache_misses', 0)}\n",
