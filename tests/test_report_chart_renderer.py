@@ -30,8 +30,9 @@ fakes -- no `reports/charts/*.html` file is ever written), no real DB (the
 harness's `FakeDatabaseManager`), no real network, no real LLM call (the
 harness's `FakeAgent`/`ScriptedAgentRouter`, which intercepts the nested
 throwaway `Agent(...)` construction the "transmission" chart type makes,
-via the module-level `Agent` name `tests/report_agent_harness.py` already
-patches in `report_agent_module`'s namespace).
+via the module-level `Agent` name `tests/report_agent_harness.py` patches in
+`deepear.src.agents.report.agent`'s namespace -- `ReportAgent`'s real home
+since `finalize-report-agent-package-and-shim`, Phase 4 step 31).
 
 `TestChartRendererModuleFunctionDirectly` at the bottom of this file was
 added *after* the move landed (all classes above it were written and passed
@@ -39,9 +40,10 @@ against the pre-move `ReportAgent._process_charts` body first, then re-run
 unchanged against the post-move delegator with identical results) -- it
 exercises `deepear.src.agents.report.chart_renderer.process_charts` directly
 and proves the `agent_cls` injection decision: the delegator resolves
-`report_agent_module`'s `Agent` global at call time, not at import time, so
-the harness's existing `Agent` patch point keeps working with zero changes
-to the harness itself.
+`Agent` from its own module's globals (`deepear.src.agents.report.agent`,
+where `ReportAgent._process_charts` itself is defined) at call time, not at
+import time, so the harness's existing `Agent` patch point keeps working
+with zero changes to the harness itself.
 """
 
 from __future__ import annotations
@@ -524,7 +526,7 @@ class TestChartRendererModuleFunctionDirectly:
         harness = make_report_agent(monkeypatch)
         content = '```json-chart\n{"type": "stock", "ticker": "600001", "title": "600001 Trend"}\n```'
 
-        import deepear.src.agents.report_agent as report_agent_module
+        import deepear.src.agents.report.agent as report_agent_module
         from deepear.src.agents.report.chart_renderer import process_charts
 
         direct_result = process_charts(
@@ -542,9 +544,10 @@ class TestChartRendererModuleFunctionDirectly:
 
     def test_agent_cls_is_resolved_at_call_time_from_report_agent_modules_global(self, monkeypatch):
         """Proves the injection decision: the delegator forwards
-        `agent_cls=Agent`, reading `report_agent`'s own module-global
-        `Agent` name each time `_process_charts` is called -- not a
-        value captured once at construction time. Re-patching
+        `agent_cls=Agent`, reading `deepear.src.agents.report.agent`'s own
+        module-global `Agent` name (the module `ReportAgent` -- and
+        `_process_charts` -- are defined in) each time `_process_charts` is
+        called -- not a value captured once at construction time. Re-patching
         `report_agent_module.Agent` *after* the `ReportAgent` (and its
         four long-lived agents) already exist still changes what the
         "transmission" chart type's nested throwaway Agent construction
@@ -557,7 +560,7 @@ class TestChartRendererModuleFunctionDirectly:
         install_fake_stock_tools(monkeypatch)
         harness = make_report_agent(monkeypatch)
 
-        import deepear.src.agents.report_agent as report_agent_module
+        import deepear.src.agents.report.agent as report_agent_module
 
         second_fake_calls: list[dict] = []
 

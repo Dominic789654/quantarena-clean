@@ -36,7 +36,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-import deepear.src.agents.report_agent as report_agent_module
+import deepear.src.agents.report.agent as report_agent_module
 from deepear.src.agents.report.clustering import cluster_signals
 from deepear.src.agents.report_agent import ReportAgent
 from tests.report_agent_harness import ScriptedAgentRouter, make_report_agent

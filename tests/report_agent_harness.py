@@ -32,6 +32,13 @@ for the full rationale):
   optionally Kronos-backed forecast pipeline is never imported/constructed) --
   the real `_get_forecast_agent` lazy-caching method is left untouched, so tests
   can characterize its actual "construct at most once" behavior.
+
+Since `finalize-report-agent-package-and-shim` (Phase 4, step 31) moved the
+`ReportAgent` class itself into `deepear.src.agents.report.agent`, its methods
+now execute in *that* module's namespace -- so this harness patches `Agent`
+and `ForecastAgent` there, not on the `deepear.src.agents.report_agent` shim
+(patching the shim would silently no-op: the class body would still read the
+real `agno.agent.Agent` / `ForecastAgent` names from its own module globals).
 """
 
 from __future__ import annotations
@@ -39,7 +46,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-import deepear.src.agents.report_agent as report_agent_module
+import deepear.src.agents.report.agent as report_agent_module
 from deepear.src.agents.report_agent import ReportAgent
 
 # ---------------------------------------------------------------------------
@@ -60,7 +67,7 @@ class FakeModel:
 
     def __init__(self, with_response_format: bool = False):
         if with_response_format:
-            # Presence (not value) is what `hasattr` checks in report_agent.py.
+            # Presence (not value) is what `hasattr` checks in report/agent.py.
             self.response_format = None
 
 
@@ -317,8 +324,10 @@ def make_report_agent(
     """Build a real `ReportAgent` wired with fakes.
 
     Monkeypatches two construction-time collaborators in the
-    `deepear.src.agents.report_agent` module namespace (never via
-    `sys.modules` replacement, following the seed test's convention):
+    `deepear.src.agents.report.agent` module namespace -- where `ReportAgent`
+    itself now lives (since `finalize-report-agent-package-and-shim`), and
+    where its methods actually resolve these names -- never via `sys.modules`
+    replacement, following the seed test's convention:
 
     - `Agent` -> a `FakeAgent` subclass bound to `router`, so the four
       internal agents never make a real LLM call.

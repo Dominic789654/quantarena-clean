@@ -6,8 +6,8 @@ three arguments. The non-incremental final-assembly branch in `generate_report`
 `ReportAgent(..., incremental_edit=False)` run whose joined section length stayed under
 the 80k-char incremental threshold raised a `TypeError` at final assembly. This test
 builds a *real* `ReportAgent` (only the `agno.agent.Agent` class is stubbed, via
-monkeypatch on the module attribute -- no sys.modules replacement) and drives
-`generate_report` down that exact branch.
+monkeypatch on the `deepear.src.agents.report.agent` module attribute -- no
+sys.modules replacement) and drives `generate_report` down that exact branch.
 """
 
 from __future__ import annotations
@@ -118,7 +118,10 @@ def _make_fake_db() -> Mock:
 
 
 def test_non_incremental_report_generation_normalizes_citations(monkeypatch):
-    monkeypatch.setattr("deepear.src.agents.report_agent.Agent", FakeAgent)
+    # Patched on `deepear.src.agents.report.agent` -- ReportAgent's real home
+    # since `finalize-report-agent-package-and-shim` -- not on the
+    # `report_agent` shim module.
+    monkeypatch.setattr("deepear.src.agents.report.agent.Agent", FakeAgent)
 
     db = _make_fake_db()
     model = FakeModel()
