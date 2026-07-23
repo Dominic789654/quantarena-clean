@@ -18,6 +18,13 @@ In any process bootstrapped through `setup_paths()`, `import agents` SHALL resol
 - **WHEN** a module executes `from agents.registry import AgentRegistry` after `setup_paths()`
 - **THEN** the imported module's `__file__` is under `deepfund/src/agents/`
 
+### Requirement: Bare `utils` package resolves to deepear
+In any process bootstrapped through `setup_paths()`, `import utils` SHALL resolve to `deepear/src/utils` (report_agent, search_tools, and deepear_client rely on bare `utils.*` imports); `shared/utils` SHALL only be reachable via the fully-qualified `shared.utils.*` form.
+
+#### Scenario: Lazy visualizer import resolves canonically
+- **WHEN** a module executes `from utils.visualizer import ...` after `setup_paths()`
+- **THEN** the imported module's `__file__` is under `deepear/src/utils/`
+
 ### Requirement: Test session pins resolution once
 The test suite SHALL pin the canonical `agents` resolution at session start via an autouse fixture so pytest collection order cannot change which package bare imports resolve to mid-session.
 
