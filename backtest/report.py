@@ -1066,6 +1066,97 @@ class ReportGenerator:
 
         return json_str
 
+    # Estimated DeepSeek pricing (CNY per 1M tokens); mirrors engine.finalize_run.
+    COST_CNY_PER_M_INPUT = 1.0
+    COST_CNY_PER_M_OUTPUT = 2.0
+
+    @staticmethod
+    def _git_revision() -> Dict[str, Any]:
+        """Best-effort git provenance; never fails the report."""
+        import subprocess
+
+        try:
+            repo_root = Path(__file__).resolve().parents[1]
+            sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo_root, capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+            dirty = bool(subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=repo_root, capture_output=True, text=True, timeout=5,
+            ).stdout.strip())
+            if sha:
+                return {"sha": sha, "dirty": dirty}
+        except Exception:
+            pass
+        return {"sha": None, "dirty": None}
+
+    def generate_run_manifest(
+        self,
+        result,  # BacktestResult
+        output_path: Optional[str] = None,
+        token_stats_override: Optional[Dict] = None,
+    ) -> str:
+        """Generate a run manifest tying the run to its inputs and LLM spend.
+
+        Captures git provenance, the experiment definition, and aggregated
+        token usage/cost so mandate sweeps can be audited and budgeted.
+        """
+        config = getattr(result, "config", {}) or {}
+
+        token_stats = token_stats_override
+        if token_stats is None and TOKEN_STATS_AVAILABLE:
+            token_stats = get_token_stats()
+        token_stats = token_stats or {}
+
+        total_input = int(token_stats.get("total_input", 0) or 0)
+        total_output = int(token_stats.get("total_output", 0) or 0)
+        llm_usage = {
+            "calls": int(token_stats.get("calls", 0) or 0),
+            "input_tokens": total_input,
+            "output_tokens": total_output,
+            "total_tokens": total_input + total_output,
+            "estimated_cost_cny": round(
+                total_input / 1_000_000 * self.COST_CNY_PER_M_INPUT
+                + total_output / 1_000_000 * self.COST_CNY_PER_M_OUTPUT,
+                4,
+            ),
+            "by_agent": token_stats.get("by_agent", {}),
+        }
+
+        # getattr defaults keep the manifest resilient to partially-populated
+        # results (several report tests drive this path with lean stubs).
+        data = {
+            "manifest_version": 1,
+            "run_id": getattr(result, "run_id", None),
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "git": self._git_revision(),
+            "experiment": {
+                "market": getattr(result, "market", None),
+                "tickers": getattr(result, "tickers", None),
+                "start_date": getattr(result, "start_date", None),
+                "end_date": getattr(result, "end_date", None),
+                "initial_cash": getattr(result, "initial_cash", None),
+                "personality": config.get("personality"),
+                "workflow_analysts": config.get("workflow_analysts"),
+                "llm": config.get("llm"),
+                "api_source": config.get("api_source"),
+                "benchmark_source": getattr(result, "benchmark_source", None),
+            },
+            "llm_usage": llm_usage,
+            "errors": list(getattr(result, "errors", []) or []),
+        }
+
+        json_str = json.dumps(self._json_safe(data), indent=2, allow_nan=False, default=str)
+
+        if output_path:
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(json_str)
+            logger.info(f"Run manifest saved to {output_path}")
+
+        return json_str
+
     def generate_broker_audit_jsonl(
         self,
         result,  # BacktestResult
@@ -1390,6 +1481,7 @@ class ReportGenerator:
             "metrics_json": str(run_dir / "metrics.json"),
             "equity_curve_csv": str(run_dir / "equity_curve.csv"),
             "broker_audit_jsonl": str(run_dir / "broker_audit.jsonl"),
+            "run_manifest_json": str(run_dir / "run_manifest.json"),
         }
         benchmark_diagnostics_path = str(run_dir / "benchmark_diagnostics.jsonl")
 
@@ -1405,6 +1497,9 @@ class ReportGenerator:
         self.generate_metrics_json(result, paths["metrics_json"])
         self.generate_equity_curve_csv(result, paths["equity_curve_csv"])
         self.generate_broker_audit_jsonl(result, paths["broker_audit_jsonl"])
+        self.generate_run_manifest(
+            result, paths["run_manifest_json"], token_stats_override=token_stats_override
+        )
         benchmark_diagnostics = self.generate_benchmark_diagnostics_jsonl(benchmark_diagnostics_path)
         if benchmark_diagnostics:
             paths["benchmark_diagnostics_jsonl"] = benchmark_diagnostics_path

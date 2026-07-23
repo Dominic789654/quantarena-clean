@@ -120,13 +120,7 @@ ENV_REQUIREMENTS: List[EnvVarRequirement] = [
         description="Anthropic API key (required if REASONING_MODEL_PROVIDER=anthropic)",
         used_in=["deepear", "deepfund", "backtest"],
     ),
-    EnvVarRequirement(
-        name="MACARON_API_KEY",
-        level=ValidationLevel.WARNING,
-        description="Macaron Responses API key (required if REASONING_MODEL_PROVIDER=macaron)",
-        used_in=["deepfund", "backtest"],
-    ),
-    
+
     # Optional Services
     EnvVarRequirement(
         name="JINA_API_KEY",
@@ -249,24 +243,14 @@ class EnvValidator:
                 elif req.level == ValidationLevel.WARNING:
                     self.warnings.append(message)
 
-        # Current Macaron integration is scoped to the DeepFund/backtest paths.
-        # DeepEar still routes through its own model factory, which does not yet
-        # support the provider.
-        if provider == "macaron" and mode == "deepear":
+        # The Macaron Responses API integration was removed; its provider key
+        # is no longer accepted.
+        if provider == "macaron":
             self.errors.append(
-                "  • REASONING_MODEL_PROVIDER: REASONING_MODEL_PROVIDER=macaron is not supported for deepear mode yet. "
-                "Current Macaron integration is limited to DeepFund/backtest paths."
+                "  • REASONING_MODEL_PROVIDER: the Macaron integration has been removed. "
+                "Use a supported provider such as DeepSeek."
             )
             self.missing[ValidationLevel.ERROR].append("REASONING_MODEL_PROVIDER")
-
-        # Macaron backtest integration currently depends on an explicit API key
-        # at runtime, so fail preflight validation early instead of surfacing the
-        # issue only when the first Responses API call is attempted.
-        if provider == "macaron" and mode in {"deepfund", "backtest", None} and not os.getenv("MACARON_API_KEY", "").strip():
-            self.errors.append(
-                "  • MACARON_API_KEY: REASONING_MODEL_PROVIDER=macaron requires MACARON_API_KEY."
-            )
-            self.missing[ValidationLevel.ERROR].append("MACARON_API_KEY")
         
         # Check data provider requirement for trading modes
         if mode in ["deepfund", "backtest"]:
@@ -362,7 +346,6 @@ class EnvValidator:
             "ark": ["ark"],
             "openrouter": ["openrouter"],
             "anthropic": ["anthropic"],
-            "macaron": ["macaron"],
             "ollama": [],  # Ollama doesn't need API key
         }
         

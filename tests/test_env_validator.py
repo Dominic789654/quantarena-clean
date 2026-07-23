@@ -63,7 +63,6 @@ class TestEnvValidator:
         vars_to_clear = [
             "REASONING_MODEL_PROVIDER",
             "REASONING_MODEL_ID",
-            "MACARON_API_KEY",
             "TUSHARE_API_KEY",
             "ALPHA_VANTAGE_API_KEY",
             "FMP_API_KEY",
@@ -198,38 +197,16 @@ class TestEnvValidator:
         result = self.validator.validate(mode="deepear", raise_on_error=False, verbose=False)
         assert result is True
 
-    def test_macaron_provider_rejected_for_deepear_mode(self):
-        """Macaron should not pass preflight validation for deepear mode yet."""
-        os.environ["REASONING_MODEL_PROVIDER"] = "macaron"
-        os.environ["REASONING_MODEL_ID"] = "gpt-5.4"
-        os.environ["MACARON_API_KEY"] = "test-macaron-key"
-
-        result = self.validator.validate(mode="deepear", raise_on_error=False, verbose=False)
-
-        assert result is False
-        assert any("not supported for deepear mode yet" in msg for msg in self.validator.errors)
-
-    def test_macaron_provider_requires_api_key_for_backtest(self):
-        """Macaron backtest validation should require an explicit API key."""
+    def test_macaron_provider_is_rejected_everywhere(self):
+        """The Macaron integration was removed; the provider key must fail preflight."""
         os.environ["REASONING_MODEL_PROVIDER"] = "macaron"
         os.environ["REASONING_MODEL_ID"] = "gpt-5.4"
         os.environ["TUSHARE_API_KEY"] = "test-tushare-key"
 
-        result = self.validator.validate(mode="backtest", raise_on_error=False, verbose=False)
-
-        assert result is False
-        assert any("MACARON_API_KEY" in msg for msg in self.validator.errors)
-
-    def test_macaron_provider_passes_for_backtest_with_api_key(self):
-        """Macaron should pass backtest validation once its API key is configured."""
-        os.environ["REASONING_MODEL_PROVIDER"] = "macaron"
-        os.environ["REASONING_MODEL_ID"] = "gpt-5.4"
-        os.environ["MACARON_API_KEY"] = "test-macaron-key"
-        os.environ["TUSHARE_API_KEY"] = "test-tushare-key"
-
-        result = self.validator.validate(mode="backtest", raise_on_error=False, verbose=False)
-
-        assert result is True
+        for mode in ("deepear", "backtest"):
+            result = self.validator.validate(mode=mode, raise_on_error=False, verbose=False)
+            assert result is False
+            assert any("has been removed" in msg for msg in self.validator.errors)
     
     def test_is_key_for_provider(self):
         """Test _is_key_for_provider method."""
@@ -248,9 +225,6 @@ class TestEnvValidator:
         
         # Test OpenRouter
         assert validator._is_key_for_provider("OPENROUTER_API_KEY", "openrouter") is True
-
-        # Test Macaron
-        assert validator._is_key_for_provider("MACARON_API_KEY", "macaron") is True
     
     def test_get_missing_vars(self):
         """Test get_missing_vars method."""
@@ -281,7 +255,6 @@ class TestValidateEnvFunction:
         vars_to_clear = [
             "REASONING_MODEL_PROVIDER",
             "REASONING_MODEL_ID",
-            "MACARON_API_KEY",
             "TUSHARE_API_KEY",
             "FMP_API_KEY",
             "OPENAI_API_KEY",
@@ -329,7 +302,6 @@ class TestCheckEnvQuick:
         vars_to_clear = [
             "REASONING_MODEL_PROVIDER",
             "REASONING_MODEL_ID",
-            "MACARON_API_KEY",
             "FMP_API_KEY",
             "OPENAI_API_KEY",
             "TAVILY_API_KEY",
